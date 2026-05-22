@@ -47,11 +47,73 @@ def get_secret_value(key):
     raise KeyError(key)
 
 
+def extract_google_sheet_id(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", text)
+    if match:
+        return match.group(1)
+
+    match = re.search(r"[?&]id=([a-zA-Z0-9-_]+)", text)
+    if match:
+        return match.group(1)
+
+    return text
+
+
+def get_gspread_client(scopes):
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+    except ImportError as exc:
+        raise RuntimeError(
+            "Faltan dependencias para usar Google Sheets. Instala gspread y google-auth."
+        ) from exc
+
+    credentials = Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]),
+        scopes=scopes,
+    )
+    return gspread.authorize(credentials)
+
+
+def open_google_worksheet(sheet_id, tab_name, scopes=None):
+    required_scopes = scopes or [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ]
+    client = get_gspread_client(required_scopes)
+    return client.open_by_key(extract_google_sheet_id(sheet_id)).worksheet(tab_name)
+
+
+def read_google_worksheet_with_rows(sheet_id, tab_name):
+    worksheet = open_google_worksheet(sheet_id, tab_name)
+    values = worksheet.get_all_values()
+    if not values:
+        return worksheet, pd.DataFrame(), {}
+
+    headers = [normalize_column_name(header) for header in values[0]]
+    column_numbers = {}
+    for index, header in enumerate(headers, start=1):
+        if header and header not in column_numbers:
+            column_numbers[header] = index
+
+    rows = []
+    for sheet_row, row_values in enumerate(values[1:], start=2):
+        padded = row_values + [""] * (len(headers) - len(row_values))
+        record = dict(zip(headers, padded[: len(headers)]))
+        record["__SHEET_ROW"] = sheet_row
+        rows.append(record)
+
+    return worksheet, pd.DataFrame(rows), column_numbers
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def load_resoluciones_sheet(tab_name=None):
     """Read the private Google Sheet configured in Streamlit secrets."""
     try:
-        import gspread
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaIoBaseDownload
         from google.oauth2.service_account import Credentials
@@ -69,7 +131,7 @@ def load_resoluciones_sheet(tab_name=None):
         scopes=required_scopes,
     )
 
-    client = gspread.authorize(credentials)
+    client = get_gspread_client(required_scopes)
     sheet_id = get_secret_value("GOOGLE_SHEET_ID")
     tab_name = tab_name or get_secret_value("GOOGLE_SHEET_TAB")
     try:
