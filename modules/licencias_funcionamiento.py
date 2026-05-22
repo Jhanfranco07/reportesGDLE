@@ -886,6 +886,42 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
         },
     )
 
+    missing_zone = zoned[zoned["ZONA_NORMALIZADA"] == "SIN ZONA"].copy()
+    if missing_zone.empty:
+        return
+
+    st.warning(
+        f"Hay {len(missing_zone):,} licencias temporales/indeterminadas sin ZONA en la fuente."
+    )
+    expediente_col = find_expediente_column(missing_zone)
+    columns = [
+        column
+        for column in [
+            "RESOLUCION",
+            expediente_col,
+            "TIPO DE PROCEDIMIENTO",
+            "SECTOR",
+            "ZONA",
+            "FECHA_RESOLUCION",
+        ]
+        if column and column in missing_zone.columns
+    ]
+    if columns:
+        detail = missing_zone[columns].copy()
+        if "FECHA_RESOLUCION" in detail.columns:
+            detail["FECHA_RESOLUCION"] = detail["FECHA_RESOLUCION"].dt.strftime("%d/%m/%Y")
+        detail = detail.rename(
+            columns={
+                "RESOLUCION": "Resolucion",
+                expediente_col: "Expediente" if expediente_col else expediente_col,
+                "TIPO DE PROCEDIMIENTO": "Tipo",
+                "SECTOR": "Sector",
+                "ZONA": "Zona",
+                "FECHA_RESOLUCION": "Fecha resoluc.",
+            }
+        )
+        st.dataframe(detail, use_container_width=True, hide_index=True)
+
 
 def tabla_resumen_procedimientos(tramites_df):
     if tramites_df is None or tramites_df.empty:
@@ -1340,6 +1376,13 @@ def render_manchay_update_tools():
     render_direccion_update_tool(sheet_id)
     st.markdown("---")
     render_zona_manchay_update_tool(sheet_id)
+
+
+def render_drive_refresh_button():
+    if st.button("Actualizar datos desde Drive", key="refresh_licencias_drive", use_container_width=True):
+        load_resoluciones_sheet.clear()
+        st.success("Cache limpiada. Recargando datos desde Google Drive.")
+        st.rerun()
 
 
 def render_general_licencias(detalle_df, resumen_df, tramites_df):
@@ -1938,6 +1981,7 @@ def observaciones(resumen_df, detalle_df=None):
 
 def show_licencias_funcionamiento_module():
     st.header("Módulo de Licencias de Funcionamiento")
+    render_drive_refresh_button()
     st.markdown("---")
 
     detalle_df, resumen_df, tramites_df = load_licencias_funcionamiento_data()
