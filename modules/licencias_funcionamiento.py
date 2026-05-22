@@ -135,6 +135,7 @@ def parse_resolution_dates(series):
         series.astype(str)
         .str.strip()
         .str.replace("'", "", regex=False)
+        .str.replace(r"^(\d{1,2})-(\d{1,2})-(\d{4})$", r"\1/\2/\3", regex=True)
         .str.replace(r"/+", "/", regex=True)
     )
     dates = pd.to_datetime(cleaned, dayfirst=True, errors="coerce")
