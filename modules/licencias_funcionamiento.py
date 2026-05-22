@@ -802,11 +802,12 @@ def get_zoned_license_records(tramites_df, year=None):
     return df
 
 
-def render_zone_license_report(tramites_df, year=None):
+def render_zone_license_report(tramites_df, year=None, key_suffix=None):
     zoned = get_zoned_license_records(tramites_df, year)
     if zoned.empty:
         return
 
+    chart_key = key_suffix or year or "general"
     title_year = f" {year}" if year else ""
     st.subheader(f"Licencias por zona{title_year}")
 
@@ -834,7 +835,7 @@ def render_zone_license_report(tramites_df, year=None):
         yaxis_title="Licencias emitidas",
         showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True, key=f"licencias_zona_{year or 'general'}")
+    st.plotly_chart(fig, use_container_width=True, key=f"licencias_zona_{chart_key}")
 
     tipo_zona = (
         zoned.groupby(["ZONA_NORMALIZADA", "TIPO_PROCEDIMIENTO"], observed=False)
@@ -865,7 +866,7 @@ def render_zone_license_report(tramites_df, year=None):
         yaxis_title="Licencias emitidas",
         legend_title="Tipo",
     )
-    st.plotly_chart(fig_tipo, use_container_width=True, key=f"licencias_zona_tipo_{year or 'general'}")
+    st.plotly_chart(fig_tipo, use_container_width=True, key=f"licencias_zona_tipo_{chart_key}")
 
     tabla = resumen.rename(
         columns={
@@ -1366,7 +1367,7 @@ def render_general_licencias(detalle_df, resumen_df, tramites_df):
     estadisticas_procedimientos(tramites_df)
     grafico_ingresos_por_tipo(tramites_df)
     grafico_mensual_procedimientos(tramites_df)
-    render_zone_license_report(tramites_df, year="2025")
+    render_zone_license_report(tramites_df, year="2025", key_suffix="general_2025")
     st.markdown("---")
     tabla_resumen_procedimientos(tramites_df)
     tabla_detalle_tramites(tramites_df)
@@ -1778,7 +1779,7 @@ def render_year_licencias(year, detalle_df, resumen_df, tramites_df):
     st.markdown("---")
 
     if str(year) == "2025":
-        render_zone_license_report(tramites_df, year="2025")
+        render_zone_license_report(tramites_df, year="2025", key_suffix="tab_2025")
         st.markdown("---")
 
     if not tramites_year.empty:
