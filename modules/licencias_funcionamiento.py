@@ -66,8 +66,6 @@ MANCHAY_ADDRESS_PROCEDURES = {
     "DUPLICADO DE LICENCIA DE FUNCIONAMIENTO",
 }
 
-EMITTED_LICENSE_PROCEDURES = MANCHAY_ADDRESS_PROCEDURES
-
 TRACKED_PROCEDURES = {
     *PRIMARY_LICENSE_PROCEDURES,
     "LICENCIA DE FUNCIONAMIENTO",
@@ -798,7 +796,7 @@ def get_zoned_license_records(tramites_df, year=None):
     if tramites_df is None or tramites_df.empty or "ZONA_NORMALIZADA" not in tramites_df.columns:
         return pd.DataFrame()
 
-    df = tramites_df[tramites_df["PROCEDIMIENTO_NORMALIZADO"].isin(EMITTED_LICENSE_PROCEDURES)].copy()
+    df = tramites_df[tramites_df["PROCEDIMIENTO_NORMALIZADO"].isin(PRIMARY_LICENSE_PROCEDURES)].copy()
     if year is not None:
         df = filter_period(df, year)
     return df
