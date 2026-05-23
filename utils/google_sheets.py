@@ -161,6 +161,8 @@ def load_resoluciones_sheet(tab_name=None):
         df = pd.read_excel(buffer, sheet_name=tab_name)
 
     df.columns = [normalize_column_name(col) for col in df.columns]
+    df = df.loc[:, [bool(col) for col in df.columns]]
+    df = df.loc[:, ~df.columns.duplicated()]
     return df
 
 

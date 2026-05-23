@@ -1236,6 +1236,31 @@ def apply_sheet_updates(sheet_id, preview_df, target_column, value_column, tab_n
     return len(cells)
 
 
+def build_zona_manchay_preview(sheet_id):
+    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, ADDRESS_UPDATE_TAB)
+    require_sheet_columns(sheet_df, ["DIRECCION DEL ESTABLECIMIENTO", "SECTOR", "ZONA"])
+
+    direccion_manchay = sheet_df["DIRECCION DEL ESTABLECIMIENTO"].map(lambda value: "MANCHAY" in normalize_text(value))
+    sector_manchay = sheet_df["SECTOR"].map(lambda value: "MANCHAY" in normalize_text(value))
+    mask = sheet_df["ZONA"].map(is_blank) & (direccion_manchay | sector_manchay)
+
+    rows = []
+    for _, row in sheet_df[mask].iterrows():
+        rows.append(
+            {
+                "fila": int(row["__SHEET_ROW"]),
+                "resolucion sg": row.get("RESOLUCION DE SG", ""),
+                "expediente": row.get("EXPEDIENTE / D.S.", ""),
+                "direccion": row.get("DIRECCION DEL ESTABLECIMIENTO", ""),
+                "sector": row.get("SECTOR", ""),
+                "zona actual": row.get("ZONA", ""),
+                "zona propuesta": "MANCHAY",
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def format_google_write_error(exc):
     message = str(exc)
     if "403" in message or "does not have permission" in message:
@@ -1335,6 +1360,44 @@ def render_direccion_update_tool(sheet_id):
             st.error(format_google_write_error(exc))
 
 
+def render_zona_manchay_update_tool(sheet_id):
+    st.subheader("Completar ZONA = MANCHAY")
+    st.caption(
+        f"Hoja objetivo: {ADDRESS_UPDATE_TAB}. Si DIRECCION DEL ESTABLECIMIENTO o SECTOR contiene MANCHAY "
+        "y ZONA esta vacia, propone MANCHAY."
+    )
+
+    if st.button("Previsualizar zonas Manchay", key="preview_zona_resoluciones_2026", use_container_width=True):
+        try:
+            st.session_state["zona_resoluciones_2026_preview"] = build_zona_manchay_preview(sheet_id)
+            st.session_state["zona_resoluciones_2026_sheet_id"] = sheet_id
+        except Exception as exc:
+            st.session_state.pop("zona_resoluciones_2026_preview", None)
+            st.error(f"No se pudo preparar la vista previa: {exc}")
+
+    preview = st.session_state.get("zona_resoluciones_2026_preview")
+    if preview is not None and st.session_state.get("zona_resoluciones_2026_sheet_id") != sheet_id:
+        st.session_state.pop("zona_resoluciones_2026_preview", None)
+        preview = None
+    if preview is None:
+        return
+
+    if preview.empty:
+        st.info("No hay filas pendientes para marcar ZONA = MANCHAY.")
+        return
+
+    show_metric_row([("Filas a actualizar", f"{len(preview):,}")])
+    st.dataframe(preview, use_container_width=True, hide_index=True)
+
+    if st.button("Escribir ZONA = MANCHAY", key="apply_zona_resoluciones_2026", use_container_width=True):
+        try:
+            updated = apply_sheet_updates(sheet_id, preview, "ZONA", "zona propuesta")
+            st.success(f"Se actualizaron {updated:,} filas en Google Sheets.")
+            st.session_state.pop("zona_resoluciones_2026_preview", None)
+        except Exception as exc:
+            st.error(format_google_write_error(exc))
+
+
 def render_resoluciones_2026_update_tools():
     st.subheader("Actualizaciones de RESOLUCIONES 2026")
     st.info(
@@ -1349,6 +1412,8 @@ def render_resoluciones_2026_update_tools():
         return
 
     render_direccion_update_tool(sheet_id)
+    st.markdown("---")
+    render_zona_manchay_update_tool(sheet_id)
 
 
 def render_drive_refresh_button():
