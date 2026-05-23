@@ -192,7 +192,7 @@ def normalize_zone(value):
         return "MANCHAY"
     if "PACHACAMAC" in text:
         return "PACHACAMAC"
-    if "JOSE" in text and "GALVEZ" in text:
+    if "JOSE" in text and ("GALVEZ" in text or "GALVES" in text):
         return "JOSE GALVEZ"
     return text
 
@@ -800,6 +800,13 @@ def get_zoned_license_records(tramites_df, year=None):
     df = tramites_df[tramites_df["PROCEDIMIENTO_NORMALIZADO"].isin(PRIMARY_LICENSE_PROCEDURES)].copy()
     if year is not None:
         df = filter_period(df, year)
+    expediente_col = find_expediente_column(df)
+    complete_mask = df["RIESGO_AGRUPADO"].notna()
+    if "TIPO DE ITSE" in df.columns:
+        complete_mask &= df["TIPO DE ITSE"].map(lambda value: not is_blank(value))
+    if expediente_col is not None:
+        complete_mask &= df[expediente_col].map(lambda value: not is_blank(value))
+    df = df[complete_mask].copy()
     return df
 
 
@@ -837,6 +844,29 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
         showlegend=False,
     )
     st.plotly_chart(fig, use_container_width=True, key=f"licencias_zona_{chart_key}")
+
+    total_licencias = int(resumen["LICENCIAS"].sum())
+    if total_licencias:
+        resumen_pct = resumen.copy()
+        resumen_pct["PORCENTAJE"] = resumen_pct["LICENCIAS"] / total_licencias * 100
+        fig_pct = px.bar(
+            resumen_pct,
+            x="ZONA_NORMALIZADA",
+            y="PORCENTAJE",
+            color="ZONA_NORMALIZADA",
+            text="PORCENTAJE",
+            color_discrete_map=ZONE_COLORS,
+            height=390,
+            labels={"ZONA_NORMALIZADA": "Zona", "PORCENTAJE": "% del total"},
+        )
+        fig_pct.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
+        fig_pct.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)",
+            xaxis_title="Zona",
+            yaxis_title="% del total de licencias emitidas",
+            showlegend=False,
+        )
+        st.plotly_chart(fig_pct, use_container_width=True, key=f"licencias_zona_pct_{chart_key}")
 
     tipo_zona = (
         zoned.groupby(["ZONA_NORMALIZADA", "TIPO_PROCEDIMIENTO"], observed=False)
@@ -1532,7 +1562,7 @@ def build_monthly_license_summary(detalle_year):
     )
 
 
-def render_year_license_monthly_charts(year, detalle_year):
+def render_year_license_monthly_charts(year, detalle_year, tramites_year):
     mensual = build_monthly_license_summary(detalle_year)
     if mensual.empty:
         return
@@ -1556,6 +1586,7 @@ def render_year_license_monthly_charts(year, detalle_year):
         showlegend=False,
     )
     st.plotly_chart(fig_expedientes, use_container_width=True, key=f"licencias_anual_{year}_emitidas_mensual")
+    render_zone_license_report(tramites_year, year=year, key_suffix=f"tab_{year}")
 
     st.subheader("Recaudación mensual por licencias")
     recaudacion_movil = mensual.sort_values("MES_NUM", ascending=False).copy()
@@ -1703,7 +1734,7 @@ def render_year_license_section(year, detalle_year, tramites_year):
     fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", legend_title="Riesgo")
     st.plotly_chart(fig, use_container_width=True, key=f"licencias_anual_{year}_riesgo_mensual")
 
-    render_year_license_monthly_charts(year, detalle_year)
+    render_year_license_monthly_charts(year, detalle_year, tramites_year)
 
     render_year_observations(year, detalle_year, tramites_year)
 
@@ -1903,10 +1934,6 @@ def render_year_licencias(year, detalle_df, resumen_df, tramites_df):
 
     render_year_license_section(year, detalle_year, tramites_year)
     st.markdown("---")
-
-    if str(year) == "2025":
-        render_zone_license_report(tramites_df, year="2025", key_suffix="tab_2025")
-        st.markdown("---")
 
     if not tramites_year.empty:
         duplicados = tramites_year[
