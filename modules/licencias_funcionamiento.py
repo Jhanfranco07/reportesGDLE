@@ -1,4 +1,5 @@
 import re
+from html import escape
 from pathlib import Path
 
 import pandas as pd
@@ -82,6 +83,43 @@ PROCEDURE_COLORS = {
     "Transferencia": "#f39c12",
     "Duplicado": "#7f8c8d",
 }
+
+
+def apply_chart_style(fig, legend_title=None, height=None):
+    if height is not None:
+        fig.update_layout(height=height)
+    fig.update_layout(
+        template="plotly_white",
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+        font=dict(color="#344054", size=12),
+        margin=dict(l=26, r=42, t=42, b=44),
+        legend=dict(
+            title=legend_title,
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        hoverlabel=dict(bgcolor="#0f3447", font_color="#ffffff"),
+        uniformtext_minsize=10,
+        uniformtext_mode="show",
+    )
+    fig.update_xaxes(
+        showgrid=True,
+        gridcolor="#e6edf5",
+        zeroline=False,
+        automargin=True,
+        tickfont=dict(size=11),
+    )
+    fig.update_yaxes(
+        showgrid=False,
+        zeroline=False,
+        automargin=True,
+        tickfont=dict(size=11),
+    )
+    return fig
 
 DATE_COLUMNS = ["FECHA RESOLUCION", "FECHA RESOLUC.", "FECHA RESOLUC", "FEC.RESOLUC.", "FEC.RESOLUC"]
 ZONE_COLORS = {
@@ -464,6 +502,8 @@ def grafico_expedientes(resumen_df):
         marker_line_color="rgba(0,0,0,0.3)",
         marker_line_width=2
     )
+    apply_chart_style(fig, height=420)
+    fig.update_layout(showlegend=False)
 
     st.plotly_chart(fig, use_container_width=True, key="licencias_general_expedientes")
 
@@ -498,6 +538,8 @@ def grafico_recaudacion(resumen_df):
     )
 
     fig.update_xaxes(type="category")
+    apply_chart_style(fig, height=420)
+    fig.update_layout(showlegend=False)
 
     st.plotly_chart(fig, use_container_width=True, key="licencias_general_recaudacion")
 
@@ -535,6 +577,7 @@ def grafico_riesgo_apilado(detalle_df):
     )
 
     fig.update_xaxes(type="category")
+    apply_chart_style(fig, legend_title="Riesgo", height=450)
 
     st.plotly_chart(fig, use_container_width=True, key="licencias_general_riesgo_apilado")
 
@@ -572,6 +615,7 @@ def grafico_recaudacion_riesgo(detalle_df):
     )
 
     fig.update_xaxes(type="category")
+    apply_chart_style(fig, legend_title="Riesgo", height=450)
 
     st.plotly_chart(fig, use_container_width=True, key="licencias_general_recaudacion_riesgo")
 
@@ -840,12 +884,20 @@ def get_zoned_license_records(tramites_df, year=None):
     df = tramites_df[tramites_df["PROCEDIMIENTO_NORMALIZADO"].isin(PRIMARY_LICENSE_PROCEDURES)].copy()
     if year is not None:
         df = filter_period(df, year)
-    expediente_col = find_expediente_column(df)
     complete_mask = df["RIESGO_AGRUPADO"].notna()
     if "TIPO DE ITSE" in df.columns:
         complete_mask &= df["TIPO DE ITSE"].map(lambda value: not is_blank(value))
-    if expediente_col is not None:
-        complete_mask &= df[expediente_col].map(lambda value: not is_blank(value))
+    expediente_cols = [
+        column
+        for column in df.columns
+        if any(token in normalize_text(column) for token in ["EXPEDIENTE", "EDIENTE"])
+    ]
+    if expediente_cols:
+        has_expediente = df[expediente_cols].apply(
+            lambda row: any(not is_blank(value) for value in row),
+            axis=1,
+        )
+        complete_mask &= has_expediente
     df = df[complete_mask].copy()
     return df
 
@@ -857,7 +909,8 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
 
     chart_key = key_suffix or year or "general"
     title_year = f" {year}" if year else ""
-    st.subheader(f"Licencias por zona{title_year}")
+    title = f"Licencias por zona{title_year}" if year else "Licencias totales por zona"
+    st.subheader(title)
 
     resumen = (
         zoned.groupby("ZONA_NORMALIZADA", observed=False)
@@ -866,46 +919,45 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
         .sort_values("LICENCIAS", ascending=False)
     )
 
+    resumen_chart = resumen.sort_values("LICENCIAS", ascending=True).copy()
     fig = px.bar(
-        resumen,
-        x="ZONA_NORMALIZADA",
-        y="LICENCIAS",
+        resumen_chart,
+        x="LICENCIAS",
+        y="ZONA_NORMALIZADA",
         color="ZONA_NORMALIZADA",
         text="LICENCIAS",
+        orientation="h",
         color_discrete_map=ZONE_COLORS,
-        height=390,
+        height=max(360, len(resumen_chart) * 82),
         labels={"ZONA_NORMALIZADA": "Zona", "LICENCIAS": "Licencias emitidas"},
     )
-    fig.update_traces(textposition="outside")
-    fig.update_layout(
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis_title="Zona",
-        yaxis_title="Licencias emitidas",
-        showlegend=False,
-    )
+    fig.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False)
+    apply_chart_style(fig, height=max(360, len(resumen_chart) * 82))
+    fig.update_layout(showlegend=False, margin=dict(l=110, r=90, t=32, b=40))
+    fig.update_xaxes(title="Licencias emitidas")
+    fig.update_yaxes(title="Zona", categoryorder="array", categoryarray=resumen_chart["ZONA_NORMALIZADA"].tolist())
     st.plotly_chart(fig, use_container_width=True, key=f"licencias_zona_{chart_key}")
 
     total_licencias = int(resumen["LICENCIAS"].sum())
     if total_licencias:
-        resumen_pct = resumen.copy()
+        resumen_pct = resumen_chart.copy()
         resumen_pct["PORCENTAJE"] = resumen_pct["LICENCIAS"] / total_licencias * 100
         fig_pct = px.bar(
             resumen_pct,
-            x="ZONA_NORMALIZADA",
-            y="PORCENTAJE",
+            x="PORCENTAJE",
+            y="ZONA_NORMALIZADA",
             color="ZONA_NORMALIZADA",
             text="PORCENTAJE",
+            orientation="h",
             color_discrete_map=ZONE_COLORS,
-            height=390,
+            height=max(360, len(resumen_pct) * 82),
             labels={"ZONA_NORMALIZADA": "Zona", "PORCENTAJE": "% del total"},
         )
-        fig_pct.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
-        fig_pct.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)",
-            xaxis_title="Zona",
-            yaxis_title="% del total de licencias emitidas",
-            showlegend=False,
-        )
+        fig_pct.update_traces(texttemplate="%{x:.1f}%", textposition="outside", cliponaxis=False)
+        apply_chart_style(fig_pct, height=max(360, len(resumen_pct) * 82))
+        fig_pct.update_layout(showlegend=False, margin=dict(l=110, r=90, t=32, b=40))
+        fig_pct.update_xaxes(title="% del total de licencias emitidas", ticksuffix="%")
+        fig_pct.update_yaxes(title="Zona", categoryorder="array", categoryarray=resumen_chart["ZONA_NORMALIZADA"].tolist())
         st.plotly_chart(fig_pct, use_container_width=True, key=f"licencias_zona_pct_{chart_key}")
 
     tipo_zona = (
@@ -930,13 +982,9 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
             "TIPO_PROCEDIMIENTO": "Tipo de tramite",
         },
     )
-    fig_tipo.update_traces(textposition="inside")
-    fig_tipo.update_layout(
-        plot_bgcolor="rgba(0,0,0,0)",
-        xaxis_title="Zona",
-        yaxis_title="Licencias emitidas",
-        legend_title="Tipo",
-    )
+    fig_tipo.update_traces(textposition="inside", insidetextanchor="middle")
+    apply_chart_style(fig_tipo, legend_title="Tipo", height=410)
+    fig_tipo.update_layout(xaxis_title="Zona", yaxis_title="Licencias emitidas")
     st.plotly_chart(fig_tipo, use_container_width=True, key=f"licencias_zona_tipo_{chart_key}")
 
     tabla = resumen.rename(
@@ -1776,10 +1824,13 @@ def render_general_licencias(detalle_df, resumen_df, tramites_df):
     grafico_expedientes(resumen_df)
     st.markdown("---")
 
-    grafico_recaudacion(resumen_df)
+    grafico_riesgo_apilado(detalle_df)
     st.markdown("---")
 
-    grafico_riesgo_apilado(detalle_df)
+    render_zone_license_report(tramites_df, key_suffix="general_total")
+    st.markdown("---")
+
+    grafico_recaudacion(resumen_df)
     st.markdown("---")
 
     grafico_recaudacion_riesgo(detalle_df)
@@ -1794,7 +1845,6 @@ def render_general_licencias(detalle_df, resumen_df, tramites_df):
     estadisticas_procedimientos(tramites_df)
     grafico_ingresos_por_tipo(tramites_df)
     grafico_mensual_procedimientos(tramites_df)
-    render_zone_license_report(tramites_df, year="2025", key_suffix="general_2025")
     st.markdown("---")
     tabla_resumen_procedimientos(tramites_df)
     tabla_detalle_tramites(tramites_df)
@@ -1811,9 +1861,15 @@ def render_general_licencias(detalle_df, resumen_df, tramites_df):
 
 
 def show_metric_row(metrics):
-    cols = st.columns(len(metrics))
-    for col, (label, value) in zip(cols, metrics):
-        col.metric(label, value)
+    cards = []
+    for label, value in metrics:
+        cards.append(
+            '<div class="gde-metric-card">'
+            f'<div class="gde-metric-label">{escape(str(label))}</div>'
+            f'<div class="gde-metric-value">{escape(str(value))}</div>'
+            "</div>"
+        )
+    st.markdown(f'<div class="gde-metric-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
 
 
 def variacion_porcentual(base, actual):

@@ -232,6 +232,46 @@ def apply_professional_theme():
             font-weight: 850;
         }
 
+        [data-testid="stMetricValue"] > div {
+            overflow: visible;
+            text-overflow: clip;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            font-size: clamp(1.35rem, 2.1vw, 2rem);
+            line-height: 1.12;
+        }
+
+        .gde-metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 0.9rem;
+            margin: 0.35rem 0 1rem;
+        }
+
+        .gde-metric-card {
+            border: 1px solid var(--gde-border);
+            border-radius: 8px;
+            padding: 0.95rem 1rem;
+            background: linear-gradient(180deg, #ffffff 0%, #f9fbfd 100%);
+            box-shadow: 0 10px 28px rgba(20, 44, 72, 0.07);
+            min-width: 0;
+        }
+
+        .gde-metric-label {
+            color: var(--gde-muted);
+            font-size: 0.78rem;
+            font-weight: 760;
+            margin-bottom: 0.45rem;
+        }
+
+        .gde-metric-value {
+            color: var(--gde-primary-dark);
+            font-size: clamp(1.35rem, 2.1vw, 2rem);
+            font-weight: 850;
+            line-height: 1.12;
+            overflow-wrap: anywhere;
+        }
+
         [data-testid="stPlotlyChart"],
         [data-testid="stDataFrame"],
         [data-testid="stTable"] {
