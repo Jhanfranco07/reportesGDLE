@@ -53,7 +53,7 @@ MONTH_MAP = {
     12: "Diciembre",
 }
 
-DRIVE_TABS = ["RESOLUCIONES 2025", "RESOLUCIONES 2026"]
+DRIVE_TABS = ["RESOLUCIONES 2024", "RESOLUCIONES 2025", "RESOLUCIONES 2026"]
 
 PRIMARY_LICENSE_PROCEDURES = {
     "LICENCIA TEMPORAL",
@@ -83,7 +83,7 @@ PROCEDURE_COLORS = {
     "Duplicado": "#7f8c8d",
 }
 
-DATE_COLUMNS = ["FECHA RESOLUCION", "FECHA RESOLUC.", "FECHA RESOLUC"]
+DATE_COLUMNS = ["FECHA RESOLUCION", "FECHA RESOLUC.", "FECHA RESOLUC", "FEC.RESOLUC.", "FEC.RESOLUC"]
 ZONE_COLORS = {
     "MANCHAY": "#2f9e8f",
     "PACHACAMAC": "#3498db",
@@ -91,11 +91,17 @@ ZONE_COLORS = {
     "SIN ZONA": "#7f8c8d",
     "OTRAS ZONAS": "#9b59b6",
 }
+ADDRESS_UPDATE_CONFIGS = {
+    "RESOLUCIONES 2026": [
+        Path("script/data/BASE DE DATOS 2026 - REGISTRO.xlsx"),
+        Path("script/data/BASE DE DATOS 2025 - REGISTRO.xlsx"),
+    ],
+    "RESOLUCIONES 2024": [
+        Path("script/data/BASE DE DATOS 2024 - REGISTRO.xlsx"),
+        Path("script/data/BASE DE DATOS 2023 - REGISTRO.xlsx"),
+    ],
+}
 ADDRESS_UPDATE_TAB = "RESOLUCIONES 2026"
-LOCAL_LICENSE_DB_PATHS = [
-    Path("script/data/BASE DE DATOS 2026 - REGISTRO.xlsx"),
-    Path("script/data/BASE DE DATOS 2025 - REGISTRO.xlsx"),
-]
 LICENSE_SHEET_ID_STATE_KEY = "licencias_update_sheet_id"
 
 EXPEDIENTE_COLUMNS = [
@@ -199,12 +205,16 @@ def normalize_zone(value):
 
 def normalize_licencias_drive_sheet(df_raw, tab_name):
     fecha_col = first_existing_column(df_raw, DATE_COLUMNS)
-    required = {"TIPO DE PROCEDIMIENTO", "TIPO DE ITSE", "COSTO"}
-    if fecha_col is None or not required.issubset(df_raw.columns):
+    risk_col = first_existing_column(df_raw, ["TIPO DE ITSE", "TIPO ITSE"])
+    if fecha_col is None or "TIPO DE PROCEDIMIENTO" not in df_raw.columns or risk_col is None:
         st.warning(f"La hoja {tab_name} no tiene las columnas requeridas para Licencias de Funcionamiento.")
         return None
 
     df = df_raw.copy()
+    if risk_col != "TIPO DE ITSE":
+        df["TIPO DE ITSE"] = df[risk_col]
+    if "COSTO" not in df.columns:
+        df["COSTO"] = 0
     df["PROCEDIMIENTO_NORMALIZADO"] = df["TIPO DE PROCEDIMIENTO"].map(normalize_text)
     df = df[df["PROCEDIMIENTO_NORMALIZADO"].isin(TRACKED_PROCEDURES)].copy()
     if df.empty:
@@ -1112,6 +1122,24 @@ def find_expediente_column(df):
     return None
 
 
+def find_risk_column(df):
+    return first_existing_column(df, ["TIPO DE ITSE", "TIPO ITSE", "RIESGO"])
+
+
+def read_excel_with_detected_headers(path, sheet_name):
+    variants = []
+    for header_row in [0, 1]:
+        try:
+            df = pd.read_excel(path, sheet_name=sheet_name, header=header_row)
+        except Exception:
+            continue
+        df.columns = [normalize_column_name(col) for col in df.columns]
+        df = df.loc[:, [not str(col).startswith("UNNAMED") and bool(col) for col in df.columns]]
+        df = df.loc[:, ~df.columns.duplicated()]
+        variants.append(df)
+    return variants
+
+
 @st.cache_data(show_spinner=False)
 def load_local_license_database(path_text):
     path = Path(path_text)
@@ -1121,14 +1149,24 @@ def load_local_license_database(path_text):
     frames = []
     excel = pd.ExcelFile(path)
     for sheet_name in excel.sheet_names:
-        df = pd.read_excel(path, sheet_name=sheet_name)
-        df.columns = [normalize_column_name(col) for col in df.columns]
-        expediente_col = find_expediente_column(df)
-        direccion_col = find_column(df, ["DIRECCION", "DIRECION"])
-        if expediente_col is None or direccion_col is None:
+        usable = None
+        for df_candidate in read_excel_with_detected_headers(path, sheet_name):
+            expediente_col = find_expediente_column(df_candidate)
+            direccion_col = find_column(df_candidate, ["DIRECCION", "DIRECION"])
+            if expediente_col is not None and direccion_col is not None:
+                usable = (df_candidate, expediente_col, direccion_col)
+                break
+        if usable is None:
             continue
-        partial = df[[expediente_col, direccion_col]].copy()
-        partial.columns = ["EXPEDIENTE_BD", "DIRECCION_BD"]
+        df, expediente_col, direccion_col = usable
+        risk_col = find_risk_column(df)
+        columns = [expediente_col, direccion_col]
+        if risk_col is not None:
+            columns.append(risk_col)
+        partial = df[columns].copy()
+        partial.columns = ["EXPEDIENTE_BD", "DIRECCION_BD"] + (["RIESGO_BD"] if risk_col is not None else [])
+        if "RIESGO_BD" not in partial.columns:
+            partial["RIESGO_BD"] = ""
         partial["HOJA_BD"] = sheet_name
         partial["ARCHIVO_BD"] = path.name
         frames.append(partial)
@@ -1139,7 +1177,8 @@ def load_local_license_database(path_text):
     db = pd.concat(frames, ignore_index=True)
     db["EXPEDIENTE_KEY"] = db["EXPEDIENTE_BD"].map(normalize_expediente)
     db["DIRECCION_BD"] = db["DIRECCION_BD"].fillna("").astype(str).str.strip()
-    db = db[(db["EXPEDIENTE_KEY"] != "") & (db["DIRECCION_BD"] != "")]
+    db["RIESGO_BD"] = db["RIESGO_BD"].fillna("").astype(str).str.strip()
+    db = db[(db["EXPEDIENTE_KEY"] != "") & ((db["DIRECCION_BD"] != "") | (db["RIESGO_BD"] != ""))]
     db = db.drop_duplicates(subset=["EXPEDIENTE_KEY"], keep="first")
     return db
 
@@ -1172,8 +1211,8 @@ def require_sheet_columns(df, required_columns):
         )
 
 
-def build_direccion_preview(sheet_id):
-    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, ADDRESS_UPDATE_TAB)
+def build_direccion_preview(sheet_id, tab_name=ADDRESS_UPDATE_TAB):
+    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, tab_name)
     require_sheet_columns(
         sheet_df,
         ["TIPO DE PROCEDIMIENTO", "DIRECCION DEL ESTABLECIMIENTO"],
@@ -1212,11 +1251,11 @@ def build_direccion_preview(sheet_id):
     return pd.DataFrame(rows)
 
 
-def build_direccion_matches_preview(candidates_df):
+def build_direccion_matches_preview(candidates_df, db_paths):
     if candidates_df is None or candidates_df.empty:
         return pd.DataFrame()
 
-    db = load_local_license_databases(LOCAL_LICENSE_DB_PATHS)
+    db = load_local_license_databases(db_paths)
     db_by_expediente = db.set_index("EXPEDIENTE_KEY")
 
     rows = []
@@ -1239,6 +1278,84 @@ def build_direccion_matches_preview(candidates_df):
             }
         )
 
+    return pd.DataFrame(rows)
+
+
+def normalize_risk_for_sheet(value):
+    text = normalize_text(value)
+    if not text:
+        return ""
+    if "MUY ALTO" in text:
+        return "ITSE RIESGO MUY ALTO"
+    if "ALTO" in text:
+        return "ITSE RIESGO ALTO"
+    if "MEDIO" in text:
+        return "ITSE RIESGO MEDIO"
+    if "BAJO" in text:
+        return "ITSE RIESGO BAJO"
+    return str(value).strip()
+
+
+def build_risk_preview(sheet_id, tab_name=ADDRESS_UPDATE_TAB):
+    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, tab_name)
+    require_sheet_columns(sheet_df, ["TIPO DE PROCEDIMIENTO"])
+    risk_col = find_risk_column(sheet_df)
+    if risk_col is None:
+        raise ValueError("No se encontro columna TIPO DE ITSE / TIPO ITSE en la hoja.")
+    expediente_col = find_expediente_column(sheet_df)
+    if expediente_col is None:
+        available = ", ".join(str(column) for column in sheet_df.columns if column != "__SHEET_ROW")
+        raise ValueError(
+            "No se encontro una columna de expediente en la hoja. "
+            f"Columnas detectadas: {available}"
+        )
+
+    work_df = sheet_df.copy()
+    work_df["TIPO_NORMALIZADO"] = work_df["TIPO DE PROCEDIMIENTO"].map(normalize_text)
+    mask = work_df["TIPO_NORMALIZADO"].isin(TRACKED_PROCEDURES) & work_df[risk_col].map(is_blank)
+
+    rows = []
+    for _, row in work_df[mask].iterrows():
+        rows.append(
+            {
+                "fila": int(row["__SHEET_ROW"]),
+                "resolucion": row.get("RESOLUCION", ""),
+                "resolucion sg": row.get("RESOLUCION DE SG", ""),
+                "expediente": row.get(expediente_col, ""),
+                "tipo": row.get("TIPO DE PROCEDIMIENTO", ""),
+                "riesgo actual": row.get(risk_col, ""),
+                "columna riesgo": risk_col,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def build_risk_matches_preview(candidates_df, db_paths):
+    if candidates_df is None or candidates_df.empty:
+        return pd.DataFrame()
+
+    db = load_local_license_databases(db_paths)
+    db_by_expediente = db.set_index("EXPEDIENTE_KEY")
+
+    rows = []
+    for _, row in candidates_df.iterrows():
+        expediente_key = normalize_expediente(row.get("expediente", ""))
+        match = db_by_expediente.loc[expediente_key] if expediente_key in db_by_expediente.index else None
+        riesgo = "" if match is None else normalize_risk_for_sheet(match.get("RIESGO_BD", ""))
+        rows.append(
+            {
+                "fila": int(row["fila"]),
+                "resolucion": row.get("resolucion", ""),
+                "resolucion sg": row.get("resolucion sg", ""),
+                "expediente": row.get("expediente", ""),
+                "tipo": row.get("tipo", ""),
+                "riesgo encontrado": riesgo,
+                "archivo bd": "" if match is None else str(match.get("ARCHIVO_BD", "")),
+                "hoja bd": "" if match is None else str(match.get("HOJA_BD", "")),
+                "estado": "CON COINCIDENCIA" if riesgo else "SIN COINCIDENCIA",
+                "columna riesgo": row.get("columna riesgo", "TIPO DE ITSE"),
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -1273,8 +1390,8 @@ def apply_sheet_updates(sheet_id, preview_df, target_column, value_column, tab_n
     return len(cells)
 
 
-def build_zona_search_preview(sheet_id, search_text, zone_value):
-    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, ADDRESS_UPDATE_TAB)
+def build_zona_search_preview(sheet_id, search_text, zone_value, tab_name=ADDRESS_UPDATE_TAB):
+    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, tab_name)
     require_sheet_columns(sheet_df, ["DIRECCION DEL ESTABLECIMIENTO", "SECTOR", "ZONA"])
 
     tokens = re.findall(r"[0-9A-Z]+", normalize_text(search_text))
@@ -1321,28 +1438,34 @@ def format_google_write_error(exc):
     return f"No se pudo escribir en Google Sheets: {exc}"
 
 
-def render_direccion_update_tool(sheet_id):
+def render_direccion_update_tool(sheet_id, tab_name, db_paths):
     st.subheader("Completar DIRECCION DEL ESTABLECIMIENTO")
     st.caption(
-        f"Hoja objetivo: {ADDRESS_UPDATE_TAB}. Paso 1: revisa filas con direccion vacia. "
-        "Paso 2: busca coincidencias en las BD locales 2026 y 2025."
+        f"Hoja objetivo: {tab_name}. Paso 1: revisa filas con direccion vacia. "
+        "Paso 2: busca coincidencias en las BD locales configuradas."
     )
 
-    if st.button("1. Ver expedientes con direccion vacia", key="preview_direcciones_resoluciones_2026", use_container_width=True):
+    key_suffix = normalize_text(tab_name).replace(" ", "_")
+
+    if st.button("1. Ver expedientes con direccion vacia", key=f"preview_direcciones_{key_suffix}", use_container_width=True):
         try:
-            st.session_state["direccion_resoluciones_2026_candidates"] = build_direccion_preview(sheet_id)
-            st.session_state["direccion_resoluciones_2026_sheet_id"] = sheet_id
-            st.session_state.pop("direccion_resoluciones_2026_matches", None)
+            st.session_state["direccion_candidates"] = build_direccion_preview(sheet_id, tab_name)
+            st.session_state["direccion_sheet_id"] = sheet_id
+            st.session_state["direccion_tab_name"] = tab_name
+            st.session_state.pop("direccion_matches", None)
         except Exception as exc:
-            st.session_state.pop("direccion_resoluciones_2026_candidates", None)
-            st.session_state.pop("direccion_resoluciones_2026_matches", None)
+            st.session_state.pop("direccion_candidates", None)
+            st.session_state.pop("direccion_matches", None)
             st.error(f"No se pudo preparar la vista previa: {exc}")
 
-    candidates = st.session_state.get("direccion_resoluciones_2026_candidates")
-    matches = st.session_state.get("direccion_resoluciones_2026_matches")
-    if candidates is not None and st.session_state.get("direccion_resoluciones_2026_sheet_id") != sheet_id:
-        st.session_state.pop("direccion_resoluciones_2026_candidates", None)
-        st.session_state.pop("direccion_resoluciones_2026_matches", None)
+    candidates = st.session_state.get("direccion_candidates")
+    matches = st.session_state.get("direccion_matches")
+    if candidates is not None and (
+        st.session_state.get("direccion_sheet_id") != sheet_id
+        or st.session_state.get("direccion_tab_name") != tab_name
+    ):
+        st.session_state.pop("direccion_candidates", None)
+        st.session_state.pop("direccion_matches", None)
         candidates = None
         matches = None
     if candidates is None:
@@ -1362,12 +1485,12 @@ def render_direccion_update_tool(sheet_id):
     )
     st.dataframe(candidates, use_container_width=True, hide_index=True)
 
-    if st.button("2. Buscar coincidencias en BD local", key="match_direcciones_resoluciones_2026", use_container_width=True):
+    if st.button("2. Buscar coincidencias en BD local", key=f"match_direcciones_{key_suffix}", use_container_width=True):
         try:
-            matches = build_direccion_matches_preview(candidates)
-            st.session_state["direccion_resoluciones_2026_matches"] = matches
+            matches = build_direccion_matches_preview(candidates, db_paths)
+            st.session_state["direccion_matches"] = matches
         except Exception as exc:
-            st.session_state.pop("direccion_resoluciones_2026_matches", None)
+            st.session_state.pop("direccion_matches", None)
             st.error(f"No se pudo buscar en la BD local: {exc}")
             return
 
@@ -1393,48 +1516,136 @@ def render_direccion_update_tool(sheet_id):
         st.warning("No hay direcciones encontradas para escribir.")
         return
 
-    if st.button("Escribir direcciones encontradas", key="apply_direcciones_resoluciones_2026", use_container_width=True):
+    if st.button("Escribir direcciones encontradas", key=f"apply_direcciones_{key_suffix}", use_container_width=True):
         try:
             updated = apply_sheet_updates(
                 sheet_id,
                 matches_to_write,
                 "DIRECCION DEL ESTABLECIMIENTO",
                 "direccion encontrada",
+                tab_name=tab_name,
             )
             st.success(f"Se actualizaron {updated:,} filas en Google Sheets.")
-            st.session_state.pop("direccion_resoluciones_2026_candidates", None)
-            st.session_state.pop("direccion_resoluciones_2026_matches", None)
+            st.session_state.pop("direccion_candidates", None)
+            st.session_state.pop("direccion_matches", None)
         except Exception as exc:
             st.error(format_google_write_error(exc))
 
 
-def render_zona_search_update_tool(sheet_id):
+def render_risk_update_tool(sheet_id, tab_name, db_paths):
+    st.subheader("Completar TIPO ITSE")
+    st.caption(
+        f"Hoja objetivo: {tab_name}. Busca expedientes con TIPO ITSE vacio y cruza con la columna RIESGO de la BD local."
+    )
+    key_suffix = normalize_text(tab_name).replace(" ", "_")
+
+    if st.button("1. Ver expedientes sin tipo ITSE", key=f"preview_riesgo_{key_suffix}", use_container_width=True):
+        try:
+            st.session_state["risk_candidates"] = build_risk_preview(sheet_id, tab_name)
+            st.session_state["risk_sheet_id"] = sheet_id
+            st.session_state["risk_tab_name"] = tab_name
+            st.session_state.pop("risk_matches", None)
+        except Exception as exc:
+            st.session_state.pop("risk_candidates", None)
+            st.session_state.pop("risk_matches", None)
+            st.error(f"No se pudo preparar la vista previa: {exc}")
+
+    candidates = st.session_state.get("risk_candidates")
+    matches = st.session_state.get("risk_matches")
+    if candidates is not None and (
+        st.session_state.get("risk_sheet_id") != sheet_id
+        or st.session_state.get("risk_tab_name") != tab_name
+    ):
+        st.session_state.pop("risk_candidates", None)
+        st.session_state.pop("risk_matches", None)
+        candidates = None
+        matches = None
+    if candidates is None:
+        return
+
+    if candidates.empty:
+        st.info("No hay filas pendientes para completar TIPO ITSE.")
+        return
+
+    show_metric_row([("Tipo ITSE vacio", f"{len(candidates):,}")])
+    st.dataframe(candidates.drop(columns=["columna riesgo"], errors="ignore"), use_container_width=True, hide_index=True)
+
+    if st.button("2. Buscar riesgos en BD local", key=f"match_riesgo_{key_suffix}", use_container_width=True):
+        try:
+            matches = build_risk_matches_preview(candidates, db_paths)
+            st.session_state["risk_matches"] = matches
+        except Exception as exc:
+            st.session_state.pop("risk_matches", None)
+            st.error(f"No se pudo buscar en la BD local: {exc}")
+            return
+
+    if matches is None:
+        return
+
+    matches_to_write = matches[matches["estado"] == "CON COINCIDENCIA"].copy()
+    show_metric_row(
+        [
+            ("Revisados en BD", f"{len(matches):,}"),
+            ("Con coincidencia", f"{len(matches_to_write):,}"),
+            ("Sin coincidencia", f"{len(matches) - len(matches_to_write):,}"),
+        ]
+    )
+    st.dataframe(matches.drop(columns=["columna riesgo"], errors="ignore"), use_container_width=True, hide_index=True)
+
+    if matches_to_write.empty:
+        st.warning("No hay riesgos encontrados para escribir.")
+        return
+
+    target_column = str(matches_to_write["columna riesgo"].dropna().iloc[0])
+    if st.button("Escribir tipos ITSE encontrados", key=f"apply_riesgo_{key_suffix}", use_container_width=True):
+        try:
+            updated = apply_sheet_updates(
+                sheet_id,
+                matches_to_write,
+                target_column,
+                "riesgo encontrado",
+                tab_name=tab_name,
+            )
+            st.success(f"Se actualizaron {updated:,} filas en Google Sheets.")
+            st.session_state.pop("risk_candidates", None)
+            st.session_state.pop("risk_matches", None)
+        except Exception as exc:
+            st.error(format_google_write_error(exc))
+
+
+def render_zona_search_update_tool(sheet_id, tab_name):
     st.subheader("Completar ZONA por busqueda")
     st.caption(
-        f"Hoja objetivo: {ADDRESS_UPDATE_TAB}. Busca texto en DIRECCION DEL ESTABLECIMIENTO y SECTOR, "
+        f"Hoja objetivo: {tab_name}. Busca texto en DIRECCION DEL ESTABLECIMIENTO y SECTOR, "
         "muestra solo filas con ZONA vacia y permite validar una por una antes de escribir."
     )
 
-    search_text = st.text_input("Buscar en direccion o sector", value="MANCHAY", key="zona_search_text_2026")
-    zone_value = st.text_input("Zona a escribir", value="MANCHAY", key="zona_value_2026")
+    key_suffix = normalize_text(tab_name).replace(" ", "_")
+    search_text = st.text_input("Buscar en direccion o sector", value="MANCHAY", key=f"zona_search_text_{key_suffix}")
+    zone_value = st.text_input("Zona a escribir", value="MANCHAY", key=f"zona_value_{key_suffix}")
 
-    if st.button("Buscar filas para completar zona", key="preview_zona_resoluciones_2026", use_container_width=True):
+    if st.button("Buscar filas para completar zona", key=f"preview_zona_{key_suffix}", use_container_width=True):
         try:
-            st.session_state["zona_resoluciones_2026_preview"] = build_zona_search_preview(
+            st.session_state["zona_preview"] = build_zona_search_preview(
                 sheet_id,
                 search_text,
                 zone_value,
+                tab_name=tab_name,
             )
-            st.session_state["zona_resoluciones_2026_sheet_id"] = sheet_id
-            st.session_state["zona_resoluciones_2026_search"] = search_text
-            st.session_state["zona_resoluciones_2026_value"] = zone_value
+            st.session_state["zona_sheet_id"] = sheet_id
+            st.session_state["zona_tab_name"] = tab_name
+            st.session_state["zona_search"] = search_text
+            st.session_state["zona_value"] = zone_value
         except Exception as exc:
-            st.session_state.pop("zona_resoluciones_2026_preview", None)
+            st.session_state.pop("zona_preview", None)
             st.error(f"No se pudo preparar la vista previa: {exc}")
 
-    preview = st.session_state.get("zona_resoluciones_2026_preview")
-    if preview is not None and st.session_state.get("zona_resoluciones_2026_sheet_id") != sheet_id:
-        st.session_state.pop("zona_resoluciones_2026_preview", None)
+    preview = st.session_state.get("zona_preview")
+    if preview is not None and (
+        st.session_state.get("zona_sheet_id") != sheet_id
+        or st.session_state.get("zona_tab_name") != tab_name
+    ):
+        st.session_state.pop("zona_preview", None)
         preview = None
     if preview is None:
         return
@@ -1458,7 +1669,7 @@ def render_zona_search_update_tool(sheet_id):
             "zona propuesta": st.column_config.TextColumn("Zona propuesta"),
         },
         disabled=["fila", "resolucion sg", "expediente", "direccion", "sector", "zona actual"],
-        key="zona_resoluciones_2026_editor",
+        key=f"zona_editor_{key_suffix}",
     )
     selected_preview = edited_preview[
         edited_preview["aplicar"].fillna(False)
@@ -1471,17 +1682,17 @@ def render_zona_search_update_tool(sheet_id):
         ]
     )
 
-    if st.button("Escribir zonas seleccionadas", key="apply_zona_resoluciones_2026", use_container_width=True):
+    if st.button("Escribir zonas seleccionadas", key=f"apply_zona_{key_suffix}", use_container_width=True):
         try:
-            updated = apply_sheet_updates(sheet_id, selected_preview, "ZONA", "zona propuesta")
+            updated = apply_sheet_updates(sheet_id, selected_preview, "ZONA", "zona propuesta", tab_name=tab_name)
             st.success(f"Se actualizaron {updated:,} filas en Google Sheets.")
-            st.session_state.pop("zona_resoluciones_2026_preview", None)
+            st.session_state.pop("zona_preview", None)
         except Exception as exc:
             st.error(format_google_write_error(exc))
 
 
 def render_resoluciones_2026_update_tools():
-    st.subheader("Actualizaciones de RESOLUCIONES 2026")
+    st.subheader("Actualizaciones de resoluciones")
     st.info(
         "Las vistas previas no escriben cambios. La escritura ocurre solo con el boton de confirmacion de cada bloque."
     )
@@ -1493,9 +1704,20 @@ def render_resoluciones_2026_update_tools():
         st.warning("Ingresa el ID o URL del Google Sheet para continuar.")
         return
 
-    render_direccion_update_tool(sheet_id)
+    tab_name = st.selectbox(
+        "Hoja a actualizar",
+        options=list(ADDRESS_UPDATE_CONFIGS.keys()),
+        index=0,
+        key="address_update_tab_name",
+    )
+    db_paths = ADDRESS_UPDATE_CONFIGS[tab_name]
+    st.caption("BD local usada: " + ", ".join(path.name for path in db_paths))
+
+    render_direccion_update_tool(sheet_id, tab_name, db_paths)
     st.markdown("---")
-    render_zona_search_update_tool(sheet_id)
+    render_risk_update_tool(sheet_id, tab_name, db_paths)
+    st.markdown("---")
+    render_zona_search_update_tool(sheet_id, tab_name)
 
 
 def render_drive_refresh_button():
@@ -2112,7 +2334,7 @@ def show_licencias_funcionamiento_module():
     elif resumen_df.attrs.get("source") == "mixed":
         st.success("Histórico local conservado y años disponibles actualizados desde Google Drive.")
 
-    tabs = st.tabs(["General", "2023", "2024", "2025", "2026", "Actualizar 2026"])
+    tabs = st.tabs(["General", "2023", "2024", "2025", "2026", "Actualizar"])
 
     with tabs[0]:
         render_general_licencias(detalle_df, resumen_df, tramites_df)
