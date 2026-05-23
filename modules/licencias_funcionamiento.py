@@ -100,6 +100,9 @@ ADDRESS_UPDATE_CONFIGS = {
         Path("script/data/BASE DE DATOS 2024 - REGISTRO.xlsx"),
         Path("script/data/BASE DE DATOS 2023 - REGISTRO.xlsx"),
     ],
+    "RESOLUCIONES 2023": [
+        Path("script/data/BASE DE DATOS 2023 - REGISTRO.xlsx"),
+    ],
 }
 ADDRESS_UPDATE_TAB = "RESOLUCIONES 2026"
 LICENSE_SHEET_ID_STATE_KEY = "licencias_update_sheet_id"
@@ -126,6 +129,9 @@ EXPEDIENTE_COLUMNS = [
     "NO. EXPEDIENTE",
     "NUMERO EXPEDIENTE",
     "NUMERO DE EXPEDIENTE",
+    "N° EXPEDIENTE",
+    "N EXPEDIENTE",
+    "N° DE EXPEDIENTE",
 ]
 
 
@@ -170,6 +176,25 @@ def procedure_group(procedure):
     return "Otros"
 
 
+def normalize_license_procedure(value):
+    text = normalize_text(value)
+    if text == "LICENCIA DE FUNCIONAMIENTO TEMPORAL":
+        return "LICENCIA TEMPORAL"
+    if text == "LICENCIA DE FUNCIONAMIENTO INDETERMINADA":
+        return "LICENCIA INDETERMINADA"
+    return text
+
+
+def get_sheet_procedure_column(df):
+    return first_existing_column(df, ["TIPO DE PROCEDIMIENTO", "ASUNTO"])
+
+
+def get_update_procedures_for_tab(tab_name):
+    if str(tab_name).strip().upper() == "RESOLUCIONES 2023":
+        return PRIMARY_LICENSE_PROCEDURES
+    return TRACKED_PROCEDURES
+
+
 def refresh_year_order(resumen_df):
     global YEAR_ORDER
     years = sorted(resumen_df["PERIODO"].dropna().astype(str).unique())
@@ -206,16 +231,19 @@ def normalize_zone(value):
 def normalize_licencias_drive_sheet(df_raw, tab_name):
     fecha_col = first_existing_column(df_raw, DATE_COLUMNS)
     risk_col = first_existing_column(df_raw, ["TIPO DE ITSE", "TIPO ITSE"])
-    if fecha_col is None or "TIPO DE PROCEDIMIENTO" not in df_raw.columns or risk_col is None:
+    procedure_col = get_sheet_procedure_column(df_raw)
+    if fecha_col is None or procedure_col is None or risk_col is None:
         st.warning(f"La hoja {tab_name} no tiene las columnas requeridas para Licencias de Funcionamiento.")
         return None
 
     df = df_raw.copy()
+    if procedure_col != "TIPO DE PROCEDIMIENTO":
+        df["TIPO DE PROCEDIMIENTO"] = df[procedure_col]
     if risk_col != "TIPO DE ITSE":
         df["TIPO DE ITSE"] = df[risk_col]
     if "COSTO" not in df.columns:
         df["COSTO"] = 0
-    df["PROCEDIMIENTO_NORMALIZADO"] = df["TIPO DE PROCEDIMIENTO"].map(normalize_text)
+    df["PROCEDIMIENTO_NORMALIZADO"] = df["TIPO DE PROCEDIMIENTO"].map(normalize_license_procedure)
     df = df[df["PROCEDIMIENTO_NORMALIZADO"].isin(TRACKED_PROCEDURES)].copy()
     if df.empty:
         return None
@@ -1148,7 +1176,7 @@ def load_local_license_database(path_text):
         usable = None
         for df_candidate in read_excel_with_detected_headers(path, sheet_name):
             expediente_col = find_expediente_column(df_candidate)
-            direccion_col = find_column(df_candidate, ["DIRECCION", "DIRECION"])
+            direccion_col = find_column(df_candidate, ["DIRECCION", "DIRECION", "DIRRECION"])
             if expediente_col is not None and direccion_col is not None:
                 usable = (df_candidate, expediente_col, direccion_col)
                 break
@@ -1211,8 +1239,11 @@ def build_direccion_preview(sheet_id, tab_name=ADDRESS_UPDATE_TAB):
     _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, tab_name)
     require_sheet_columns(
         sheet_df,
-        ["TIPO DE PROCEDIMIENTO", "DIRECCION DEL ESTABLECIMIENTO"],
+        ["DIRECCION DEL ESTABLECIMIENTO"],
     )
+    procedure_col = get_sheet_procedure_column(sheet_df)
+    if procedure_col is None:
+        raise ValueError("No se encontro columna TIPO DE PROCEDIMIENTO o ASUNTO en la hoja.")
     expediente_col = find_expediente_column(sheet_df)
     if expediente_col is None:
         available = ", ".join(str(column) for column in sheet_df.columns if column != "__SHEET_ROW")
@@ -1222,10 +1253,10 @@ def build_direccion_preview(sheet_id, tab_name=ADDRESS_UPDATE_TAB):
         )
 
     work_df = sheet_df.copy()
-    work_df["TIPO_NORMALIZADO"] = work_df["TIPO DE PROCEDIMIENTO"].map(normalize_text)
+    work_df["TIPO_NORMALIZADO"] = work_df[procedure_col].map(normalize_license_procedure)
     work_df["EXPEDIENTE_KEY"] = work_df[expediente_col].map(normalize_expediente)
     mask = (
-        work_df["TIPO_NORMALIZADO"].isin(TRACKED_PROCEDURES)
+        work_df["TIPO_NORMALIZADO"].isin(get_update_procedures_for_tab(tab_name))
         & work_df["DIRECCION DEL ESTABLECIMIENTO"].map(is_blank)
     )
 
@@ -1235,9 +1266,10 @@ def build_direccion_preview(sheet_id, tab_name=ADDRESS_UPDATE_TAB):
             {
                 "fila": int(row["__SHEET_ROW"]),
                 "resolucion": row.get("RESOLUCION", ""),
+                "n resolucion": row.get("N° RESOLUCION", ""),
                 "resolucion sg": row.get("RESOLUCION DE SG", ""),
                 "expediente": row.get(expediente_col, ""),
-                "tipo": row.get("TIPO DE PROCEDIMIENTO", ""),
+                "tipo": row.get(procedure_col, ""),
                 "sector": row.get("SECTOR", ""),
                 "direccion actual": row.get("DIRECCION DEL ESTABLECIMIENTO", ""),
                 "sector vacio": "SI" if is_blank(row.get("SECTOR", "")) else "NO",
@@ -1263,6 +1295,7 @@ def build_direccion_matches_preview(candidates_df, db_paths):
             {
                 "fila": int(row["fila"]),
                 "resolucion": row.get("resolucion", ""),
+                "n resolucion": row.get("n resolucion", ""),
                 "resolucion sg": row.get("resolucion sg", ""),
                 "expediente": row.get("expediente", ""),
                 "tipo": row.get("tipo", ""),
@@ -1294,7 +1327,9 @@ def normalize_risk_for_sheet(value):
 
 def build_risk_preview(sheet_id, tab_name=ADDRESS_UPDATE_TAB):
     _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, tab_name)
-    require_sheet_columns(sheet_df, ["TIPO DE PROCEDIMIENTO"])
+    procedure_col = get_sheet_procedure_column(sheet_df)
+    if procedure_col is None:
+        raise ValueError("No se encontro columna TIPO DE PROCEDIMIENTO o ASUNTO en la hoja.")
     risk_col = find_risk_column(sheet_df)
     if risk_col is None:
         raise ValueError("No se encontro columna TIPO DE ITSE / TIPO ITSE en la hoja.")
@@ -1307,8 +1342,8 @@ def build_risk_preview(sheet_id, tab_name=ADDRESS_UPDATE_TAB):
         )
 
     work_df = sheet_df.copy()
-    work_df["TIPO_NORMALIZADO"] = work_df["TIPO DE PROCEDIMIENTO"].map(normalize_text)
-    mask = work_df["TIPO_NORMALIZADO"].isin(TRACKED_PROCEDURES) & work_df[risk_col].map(is_blank)
+    work_df["TIPO_NORMALIZADO"] = work_df[procedure_col].map(normalize_license_procedure)
+    mask = work_df["TIPO_NORMALIZADO"].isin(get_update_procedures_for_tab(tab_name)) & work_df[risk_col].map(is_blank)
 
     rows = []
     for _, row in work_df[mask].iterrows():
@@ -1316,9 +1351,10 @@ def build_risk_preview(sheet_id, tab_name=ADDRESS_UPDATE_TAB):
             {
                 "fila": int(row["__SHEET_ROW"]),
                 "resolucion": row.get("RESOLUCION", ""),
+                "n resolucion": row.get("N° RESOLUCION", ""),
                 "resolucion sg": row.get("RESOLUCION DE SG", ""),
                 "expediente": row.get(expediente_col, ""),
-                "tipo": row.get("TIPO DE PROCEDIMIENTO", ""),
+                "tipo": row.get(procedure_col, ""),
                 "riesgo actual": row.get(risk_col, ""),
                 "columna riesgo": risk_col,
             }
@@ -1342,6 +1378,7 @@ def build_risk_matches_preview(candidates_df, db_paths):
             {
                 "fila": int(row["fila"]),
                 "resolucion": row.get("resolucion", ""),
+                "n resolucion": row.get("n resolucion", ""),
                 "resolucion sg": row.get("resolucion sg", ""),
                 "expediente": row.get("expediente", ""),
                 "tipo": row.get("tipo", ""),
