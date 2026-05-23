@@ -1236,25 +1236,36 @@ def apply_sheet_updates(sheet_id, preview_df, target_column, value_column, tab_n
     return len(cells)
 
 
-def build_zona_manchay_preview(sheet_id):
+def build_zona_search_preview(sheet_id, search_text, zone_value):
     _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, ADDRESS_UPDATE_TAB)
     require_sheet_columns(sheet_df, ["DIRECCION DEL ESTABLECIMIENTO", "SECTOR", "ZONA"])
 
-    direccion_manchay = sheet_df["DIRECCION DEL ESTABLECIMIENTO"].map(lambda value: "MANCHAY" in normalize_text(value))
-    sector_manchay = sheet_df["SECTOR"].map(lambda value: "MANCHAY" in normalize_text(value))
-    mask = sheet_df["ZONA"].map(is_blank) & (direccion_manchay | sector_manchay)
+    tokens = re.findall(r"[0-9A-Z]+", normalize_text(search_text))
+    if not tokens:
+        return pd.DataFrame()
+
+    def matches_search(row):
+        haystack = (
+            normalize_text(row.get("DIRECCION DEL ESTABLECIMIENTO", ""))
+            + " "
+            + normalize_text(row.get("SECTOR", ""))
+        )
+        return all(token in haystack for token in tokens)
+
+    mask = sheet_df["ZONA"].map(is_blank) & sheet_df.apply(matches_search, axis=1)
 
     rows = []
     for _, row in sheet_df[mask].iterrows():
         rows.append(
             {
+                "aplicar": True,
                 "fila": int(row["__SHEET_ROW"]),
                 "resolucion sg": row.get("RESOLUCION DE SG", ""),
                 "expediente": row.get("EXPEDIENTE / D.S.", ""),
                 "direccion": row.get("DIRECCION DEL ESTABLECIMIENTO", ""),
                 "sector": row.get("SECTOR", ""),
                 "zona actual": row.get("ZONA", ""),
-                "zona propuesta": "MANCHAY",
+                "zona propuesta": str(zone_value).strip().upper(),
             }
         )
 
@@ -1360,17 +1371,26 @@ def render_direccion_update_tool(sheet_id):
             st.error(format_google_write_error(exc))
 
 
-def render_zona_manchay_update_tool(sheet_id):
-    st.subheader("Completar ZONA = MANCHAY")
+def render_zona_search_update_tool(sheet_id):
+    st.subheader("Completar ZONA por busqueda")
     st.caption(
-        f"Hoja objetivo: {ADDRESS_UPDATE_TAB}. Si DIRECCION DEL ESTABLECIMIENTO o SECTOR contiene MANCHAY "
-        "y ZONA esta vacia, propone MANCHAY."
+        f"Hoja objetivo: {ADDRESS_UPDATE_TAB}. Busca texto en DIRECCION DEL ESTABLECIMIENTO y SECTOR, "
+        "muestra solo filas con ZONA vacia y permite validar una por una antes de escribir."
     )
 
-    if st.button("Previsualizar zonas Manchay", key="preview_zona_resoluciones_2026", use_container_width=True):
+    search_text = st.text_input("Buscar en direccion o sector", value="MANCHAY", key="zona_search_text_2026")
+    zone_value = st.text_input("Zona a escribir", value="MANCHAY", key="zona_value_2026")
+
+    if st.button("Buscar filas para completar zona", key="preview_zona_resoluciones_2026", use_container_width=True):
         try:
-            st.session_state["zona_resoluciones_2026_preview"] = build_zona_manchay_preview(sheet_id)
+            st.session_state["zona_resoluciones_2026_preview"] = build_zona_search_preview(
+                sheet_id,
+                search_text,
+                zone_value,
+            )
             st.session_state["zona_resoluciones_2026_sheet_id"] = sheet_id
+            st.session_state["zona_resoluciones_2026_search"] = search_text
+            st.session_state["zona_resoluciones_2026_value"] = zone_value
         except Exception as exc:
             st.session_state.pop("zona_resoluciones_2026_preview", None)
             st.error(f"No se pudo preparar la vista previa: {exc}")
@@ -1383,15 +1403,40 @@ def render_zona_manchay_update_tool(sheet_id):
         return
 
     if preview.empty:
-        st.info("No hay filas pendientes para marcar ZONA = MANCHAY.")
+        st.info("No hay filas pendientes para la busqueda indicada.")
         return
 
-    show_metric_row([("Filas a actualizar", f"{len(preview):,}")])
-    st.dataframe(preview, use_container_width=True, hide_index=True)
+    edited_preview = st.data_editor(
+        preview,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "aplicar": st.column_config.CheckboxColumn("Aplicar"),
+            "fila": st.column_config.NumberColumn("Fila", format="%d"),
+            "resolucion sg": st.column_config.TextColumn("Resolucion SG"),
+            "expediente": st.column_config.TextColumn("Expediente"),
+            "direccion": st.column_config.TextColumn("Direccion"),
+            "sector": st.column_config.TextColumn("Sector"),
+            "zona actual": st.column_config.TextColumn("Zona actual"),
+            "zona propuesta": st.column_config.TextColumn("Zona propuesta"),
+        },
+        disabled=["fila", "resolucion sg", "expediente", "direccion", "sector", "zona actual"],
+        key="zona_resoluciones_2026_editor",
+    )
+    selected_preview = edited_preview[
+        edited_preview["aplicar"].fillna(False)
+        & edited_preview["zona propuesta"].astype(str).str.strip().ne("")
+    ].copy()
+    show_metric_row(
+        [
+            ("Encontradas", f"{len(preview):,}"),
+            ("Seleccionadas", f"{len(selected_preview):,}"),
+        ]
+    )
 
-    if st.button("Escribir ZONA = MANCHAY", key="apply_zona_resoluciones_2026", use_container_width=True):
+    if st.button("Escribir zonas seleccionadas", key="apply_zona_resoluciones_2026", use_container_width=True):
         try:
-            updated = apply_sheet_updates(sheet_id, preview, "ZONA", "zona propuesta")
+            updated = apply_sheet_updates(sheet_id, selected_preview, "ZONA", "zona propuesta")
             st.success(f"Se actualizaron {updated:,} filas en Google Sheets.")
             st.session_state.pop("zona_resoluciones_2026_preview", None)
         except Exception as exc:
@@ -1413,7 +1458,7 @@ def render_resoluciones_2026_update_tools():
 
     render_direccion_update_tool(sheet_id)
     st.markdown("---")
-    render_zona_manchay_update_tool(sheet_id)
+    render_zona_search_update_tool(sheet_id)
 
 
 def render_drive_refresh_button():
