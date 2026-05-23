@@ -241,11 +241,18 @@ def load_licencias_drive_records():
             continue
         normalized = normalize_licencias_drive_sheet(df_raw, tab_name)
         if normalized is not None and not normalized.empty:
+            normalized = normalized.loc[:, ~normalized.columns.duplicated()].copy()
             frames.append(normalized)
 
     if not frames:
         return None
 
+    all_columns = []
+    for frame in frames:
+        for column in frame.columns:
+            if column not in all_columns:
+                all_columns.append(column)
+    frames = [frame.reindex(columns=all_columns) for frame in frames]
     df = pd.concat(frames, ignore_index=True)
     df = df.sort_values(["FECHA_RESOLUCION", "TIPO_PROCEDIMIENTO"]).reset_index(drop=True)
     df.attrs["source"] = "drive"
