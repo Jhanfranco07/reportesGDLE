@@ -121,6 +121,30 @@ def apply_chart_style(fig, legend_title=None, height=None):
     )
     return fig
 
+
+def color_scale_for_values(values, colorscale="Tealgrn"):
+    numeric = pd.to_numeric(pd.Series(values), errors="coerce").fillna(0)
+    if numeric.empty:
+        return []
+    minimum = float(numeric.min())
+    maximum = float(numeric.max())
+    if maximum == minimum:
+        positions = [0.72 for _ in numeric]
+    else:
+        positions = ((numeric - minimum) / (maximum - minimum) * 0.72 + 0.22).tolist()
+    return px.colors.sample_colorscale(colorscale, positions)
+
+
+def polish_bar_traces(fig, text_color="#344054"):
+    fig.update_traces(
+        marker_line_color="rgba(15, 52, 71, 0.34)",
+        marker_line_width=1.15,
+        opacity=0.96,
+        textfont=dict(size=12, color=text_color),
+        cliponaxis=False,
+    )
+    return fig
+
 DATE_COLUMNS = ["FECHA RESOLUCION", "FECHA RESOLUC.", "FECHA RESOLUC", "FEC.RESOLUC.", "FEC.RESOLUC"]
 ZONE_COLORS = {
     "MANCHAY": "#2f9e8f",
@@ -502,6 +526,7 @@ def grafico_expedientes(resumen_df):
         marker_line_color="rgba(0,0,0,0.3)",
         marker_line_width=2
     )
+    polish_bar_traces(fig)
     apply_chart_style(fig, height=420)
     fig.update_layout(showlegend=False)
 
@@ -529,6 +554,7 @@ def grafico_recaudacion(resumen_df):
         marker_line_color="rgba(0,0,0,0.3)",
         marker_line_width=2
     )
+    polish_bar_traces(fig)
 
     fig.update_layout(
         plot_bgcolor="rgba(0,0,0,0)",
@@ -931,6 +957,7 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
         height=max(360, len(resumen_chart) * 82),
         labels={"ZONA_NORMALIZADA": "Zona", "LICENCIAS": "Licencias emitidas"},
     )
+    polish_bar_traces(fig)
     fig.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False)
     apply_chart_style(fig, height=max(360, len(resumen_chart) * 82))
     fig.update_layout(showlegend=False, margin=dict(l=110, r=90, t=32, b=40))
@@ -953,6 +980,7 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
             height=max(360, len(resumen_pct) * 82),
             labels={"ZONA_NORMALIZADA": "Zona", "PORCENTAJE": "% del total"},
         )
+        polish_bar_traces(fig_pct)
         fig_pct.update_traces(texttemplate="%{x:.1f}%", textposition="outside", cliponaxis=False)
         apply_chart_style(fig_pct, height=max(360, len(resumen_pct) * 82))
         fig_pct.update_layout(showlegend=False, margin=dict(l=110, r=90, t=32, b=40))
@@ -982,6 +1010,7 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
             "TIPO_PROCEDIMIENTO": "Tipo de tramite",
         },
     )
+    polish_bar_traces(fig_tipo, text_color="#ffffff")
     fig_tipo.update_traces(textposition="inside", insidetextanchor="middle")
     apply_chart_style(fig_tipo, legend_title="Tipo", height=410)
     fig_tipo.update_layout(xaxis_title="Zona", yaxis_title="Licencias emitidas")
@@ -1895,23 +1924,29 @@ def render_year_license_monthly_charts(year, detalle_year, tramites_year):
         return
 
     st.subheader("Licencias emitidas por mes")
+    mensual["COLOR"] = color_scale_for_values(mensual["EXPEDIENTES"], "Tealgrn")
     fig_expedientes = px.bar(
         mensual,
         x="MES",
         y="EXPEDIENTES",
         text="EXPEDIENTES",
         category_orders={"MES": MONTH_ORDER},
-        color_discrete_sequence=["#0f4c81"],
-        height=390,
+        color="MES",
+        color_discrete_sequence=mensual["COLOR"].tolist(),
+        height=430,
         labels={"MES": "Mes", "EXPEDIENTES": "Licencias emitidas"},
     )
-    fig_expedientes.update_traces(textposition="outside")
+    fig_expedientes.update_traces(textposition="outside", texttemplate="%{y:,.0f}")
+    polish_bar_traces(fig_expedientes)
+    apply_chart_style(fig_expedientes, height=430)
     fig_expedientes.update_layout(
-        plot_bgcolor="rgba(0,0,0,0)",
         xaxis_title="Mes",
         yaxis_title="Licencias emitidas",
         showlegend=False,
+        bargap=0.18,
+        margin=dict(l=28, r=48, t=46, b=56),
     )
+    fig_expedientes.update_yaxes(gridcolor="#dfe9f3")
     st.plotly_chart(fig_expedientes, use_container_width=True, key=f"licencias_anual_{year}_emitidas_mensual")
     render_zone_license_report(tramites_year, year=year, key_suffix=f"tab_{year}")
 
