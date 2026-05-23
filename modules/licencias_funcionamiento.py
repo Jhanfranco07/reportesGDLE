@@ -482,8 +482,33 @@ def load_licencias_funcionamiento_data():
     return detalle_df, resumen_df, tramites_df
 
 
-def estadisticas_generales(resumen_df):
+def estadisticas_generales(resumen_df, tramites_df=None):
     st.subheader("Estadísticas generales")
+
+    if tramites_df is not None and not tramites_df.empty:
+        licencias = tramites_df[tramites_df["ES_LICENCIA_PRINCIPAL"]].copy()
+        licencias = licencias[licencias["RIESGO_AGRUPADO"].notna()].copy()
+        resumen_base = (
+            licencias.groupby("PERIODO", observed=False)
+            .agg(EXPEDIENTES=("FECHA_RESOLUCION", "size"), RECAUDACION=("COSTO_NUM", "sum"))
+            .reset_index()
+        )
+    else:
+        resumen_base = resumen_df.copy()
+
+    total_expedientes = int(resumen_base["EXPEDIENTES"].sum())
+    total_recaudado = float(resumen_base["RECAUDACION"].sum())
+    periodo_max = resumen_base.loc[resumen_base["RECAUDACION"].idxmax(), "PERIODO"]
+    promedio_expedientes = resumen_base["EXPEDIENTES"].mean()
+    show_metric_row(
+        [
+            ("Licencias emitidas", f"{total_expedientes:,}"),
+            ("Ingresos temp./indet.", f"S/ {total_recaudado:,.2f}"),
+            ("Mayor ingreso", str(periodo_max)),
+            ("Promedio de licencias", f"{promedio_expedientes:.1f}"),
+        ]
+    )
+    return
 
     c1, c2, c3, c4 = st.columns(4)
 
@@ -1847,7 +1872,7 @@ def render_drive_refresh_button():
 
 
 def render_general_licencias(detalle_df, resumen_df, tramites_df):
-    estadisticas_generales(resumen_df)
+    estadisticas_generales(resumen_df, tramites_df)
     st.markdown("---")
 
     grafico_expedientes(resumen_df)
