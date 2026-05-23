@@ -60,12 +60,6 @@ PRIMARY_LICENSE_PROCEDURES = {
     "LICENCIA INDETERMINADA",
 }
 
-MANCHAY_ADDRESS_PROCEDURES = {
-    *PRIMARY_LICENSE_PROCEDURES,
-    "TRANSFERENCIA DE LICENCIA DE FUNCIONAMIENTO",
-    "DUPLICADO DE LICENCIA DE FUNCIONAMIENTO",
-}
-
 TRACKED_PROCEDURES = {
     *PRIMARY_LICENSE_PROCEDURES,
     "LICENCIA DE FUNCIONAMIENTO",
@@ -97,9 +91,12 @@ ZONE_COLORS = {
     "SIN ZONA": "#7f8c8d",
     "OTRAS ZONAS": "#9b59b6",
 }
-MANCHAY_LICENSE_TAB = "LICENCIAS MANCHAY 2025"
-LOCAL_LICENSE_DB_PATH = Path("script/data/BASE DE DATOS 2025 - REGISTRO.xlsx")
-LICENSE_SHEET_ID_STATE_KEY = "licencias_manchay_sheet_id"
+ADDRESS_UPDATE_TAB = "RESOLUCIONES 2026"
+LOCAL_LICENSE_DB_PATHS = [
+    Path("script/data/BASE DE DATOS 2026 - REGISTRO.xlsx"),
+    Path("script/data/BASE DE DATOS 2025 - REGISTRO.xlsx"),
+]
+LICENSE_SHEET_ID_STATE_KEY = "licencias_update_sheet_id"
 
 EXPEDIENTE_COLUMNS = [
     "EDIENTE / D.S.",
@@ -110,8 +107,11 @@ EXPEDIENTE_COLUMNS = [
     "EXPEDIENTE N",
     "EXPEDIENTE NRO",
     "EXPEDIENTE NUMERO",
+    "DOCUMENTO SIMPLE",
     "N EXPEDIENTE",
     "N DE EXPEDIENTE",
+    "N D.S",
+    "N DS",
     "N EXP",
     "NRO. EXPEDIENTE",
     "NRO EXPEDIENTE",
@@ -1086,22 +1086,40 @@ def load_local_license_database(path_text):
     for sheet_name in excel.sheet_names:
         df = pd.read_excel(path, sheet_name=sheet_name)
         df.columns = [normalize_column_name(col) for col in df.columns]
-        expediente_col = find_column(df, ["EXPEDIENTES"])
-        direccion_col = find_column(df, ["DIRECCION"])
+        expediente_col = find_expediente_column(df)
+        direccion_col = find_column(df, ["DIRECCION", "DIRECION"])
         if expediente_col is None or direccion_col is None:
             continue
         partial = df[[expediente_col, direccion_col]].copy()
         partial.columns = ["EXPEDIENTE_BD", "DIRECCION_BD"]
         partial["HOJA_BD"] = sheet_name
+        partial["ARCHIVO_BD"] = path.name
         frames.append(partial)
 
     if not frames:
-        raise ValueError("La BD local no tiene una hoja con columnas EXPEDIENTES y DIRECCION.")
+        raise ValueError("La BD local no tiene una hoja con columnas de expediente y direccion.")
 
     db = pd.concat(frames, ignore_index=True)
     db["EXPEDIENTE_KEY"] = db["EXPEDIENTE_BD"].map(normalize_expediente)
     db["DIRECCION_BD"] = db["DIRECCION_BD"].fillna("").astype(str).str.strip()
     db = db[(db["EXPEDIENTE_KEY"] != "") & (db["DIRECCION_BD"] != "")]
+    db = db.drop_duplicates(subset=["EXPEDIENTE_KEY"], keep="first")
+    return db
+
+
+def load_local_license_databases(paths):
+    frames = []
+    errors = []
+    for path in paths:
+        try:
+            frames.append(load_local_license_database(str(path)))
+        except Exception as exc:
+            errors.append(f"{path}: {exc}")
+
+    if not frames:
+        raise ValueError("No se pudo leer ninguna BD local. " + " | ".join(errors))
+
+    db = pd.concat(frames, ignore_index=True)
     db = db.drop_duplicates(subset=["EXPEDIENTE_KEY"], keep="first")
     return db
 
@@ -1118,10 +1136,10 @@ def require_sheet_columns(df, required_columns):
 
 
 def build_direccion_preview(sheet_id):
-    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, MANCHAY_LICENSE_TAB)
+    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, ADDRESS_UPDATE_TAB)
     require_sheet_columns(
         sheet_df,
-        ["TIPO DE PROCEDIMIENTO", "DIRECCION DEL ESTABLECIMIENTO", "SECTOR"],
+        ["TIPO DE PROCEDIMIENTO", "DIRECCION DEL ESTABLECIMIENTO"],
     )
     expediente_col = find_expediente_column(sheet_df)
     if expediente_col is None:
@@ -1135,7 +1153,7 @@ def build_direccion_preview(sheet_id):
     work_df["TIPO_NORMALIZADO"] = work_df["TIPO DE PROCEDIMIENTO"].map(normalize_text)
     work_df["EXPEDIENTE_KEY"] = work_df[expediente_col].map(normalize_expediente)
     mask = (
-        work_df["TIPO_NORMALIZADO"].isin(MANCHAY_ADDRESS_PROCEDURES)
+        work_df["TIPO_NORMALIZADO"].isin(TRACKED_PROCEDURES)
         & work_df["DIRECCION DEL ESTABLECIMIENTO"].map(is_blank)
     )
 
@@ -1145,6 +1163,7 @@ def build_direccion_preview(sheet_id):
             {
                 "fila": int(row["__SHEET_ROW"]),
                 "resolucion": row.get("RESOLUCION", ""),
+                "resolucion sg": row.get("RESOLUCION DE SG", ""),
                 "expediente": row.get(expediente_col, ""),
                 "tipo": row.get("TIPO DE PROCEDIMIENTO", ""),
                 "sector": row.get("SECTOR", ""),
@@ -1160,7 +1179,7 @@ def build_direccion_matches_preview(candidates_df):
     if candidates_df is None or candidates_df.empty:
         return pd.DataFrame()
 
-    db = load_local_license_database(str(LOCAL_LICENSE_DB_PATH))
+    db = load_local_license_databases(LOCAL_LICENSE_DB_PATHS)
     db_by_expediente = db.set_index("EXPEDIENTE_KEY")
 
     rows = []
@@ -1172,10 +1191,13 @@ def build_direccion_matches_preview(candidates_df):
             {
                 "fila": int(row["fila"]),
                 "resolucion": row.get("resolucion", ""),
+                "resolucion sg": row.get("resolucion sg", ""),
                 "expediente": row.get("expediente", ""),
                 "tipo": row.get("tipo", ""),
                 "sector": row.get("sector", ""),
                 "direccion encontrada": direccion,
+                "archivo bd": "" if match is None else str(match.get("ARCHIVO_BD", "")),
+                "hoja bd": "" if match is None else str(match.get("HOJA_BD", "")),
                 "estado": "CON COINCIDENCIA" if direccion else "SIN COINCIDENCIA",
             }
         )
@@ -1183,21 +1205,7 @@ def build_direccion_matches_preview(candidates_df):
     return pd.DataFrame(rows)
 
 
-def build_zona_manchay_preview(sheet_id):
-    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, MANCHAY_LICENSE_TAB)
-    require_sheet_columns(sheet_df, ["SECTOR", "ZONA"])
-
-    mask = (
-        sheet_df["SECTOR"].map(lambda value: "MANCHAY" in normalize_text(value))
-        & sheet_df["ZONA"].map(is_blank)
-    )
-    preview = sheet_df.loc[mask, ["__SHEET_ROW", "SECTOR", "ZONA"]].copy()
-    preview = preview.rename(columns={"__SHEET_ROW": "fila", "SECTOR": "sector", "ZONA": "zona actual"})
-    preview["zona propuesta"] = "MANCHAY"
-    return preview[["fila", "sector", "zona actual", "zona propuesta"]]
-
-
-def apply_sheet_updates(sheet_id, preview_df, target_column, value_column):
+def apply_sheet_updates(sheet_id, preview_df, target_column, value_column, tab_name=ADDRESS_UPDATE_TAB):
     if preview_df is None or preview_df.empty:
         return 0
 
@@ -1206,7 +1214,7 @@ def apply_sheet_updates(sheet_id, preview_df, target_column, value_column):
     except ImportError as exc:
         raise RuntimeError("Falta la dependencia gspread para escribir en Google Sheets.") from exc
 
-    worksheet = open_google_worksheet(sheet_id, MANCHAY_LICENSE_TAB)
+    worksheet = open_google_worksheet(sheet_id, tab_name)
     headers = [normalize_column_name(header) for header in worksheet.row_values(1)]
     target_header = normalize_column_name(target_column)
     if target_header not in headers:
@@ -1243,24 +1251,25 @@ def format_google_write_error(exc):
 def render_direccion_update_tool(sheet_id):
     st.subheader("Completar DIRECCION DEL ESTABLECIMIENTO")
     st.caption(
-        "Paso 1: revisa emisiones con direccion vacia en la hoja. Paso 2: busca coincidencias en la BD local."
+        f"Hoja objetivo: {ADDRESS_UPDATE_TAB}. Paso 1: revisa filas con direccion vacia. "
+        "Paso 2: busca coincidencias en las BD locales 2026 y 2025."
     )
 
-    if st.button("1. Ver expedientes con direccion vacia", key="preview_direcciones_manchay", use_container_width=True):
+    if st.button("1. Ver expedientes con direccion vacia", key="preview_direcciones_resoluciones_2026", use_container_width=True):
         try:
-            st.session_state["direccion_manchay_candidates"] = build_direccion_preview(sheet_id)
-            st.session_state["direccion_manchay_sheet_id"] = sheet_id
-            st.session_state.pop("direccion_manchay_matches", None)
+            st.session_state["direccion_resoluciones_2026_candidates"] = build_direccion_preview(sheet_id)
+            st.session_state["direccion_resoluciones_2026_sheet_id"] = sheet_id
+            st.session_state.pop("direccion_resoluciones_2026_matches", None)
         except Exception as exc:
-            st.session_state.pop("direccion_manchay_candidates", None)
-            st.session_state.pop("direccion_manchay_matches", None)
+            st.session_state.pop("direccion_resoluciones_2026_candidates", None)
+            st.session_state.pop("direccion_resoluciones_2026_matches", None)
             st.error(f"No se pudo preparar la vista previa: {exc}")
 
-    candidates = st.session_state.get("direccion_manchay_candidates")
-    matches = st.session_state.get("direccion_manchay_matches")
-    if candidates is not None and st.session_state.get("direccion_manchay_sheet_id") != sheet_id:
-        st.session_state.pop("direccion_manchay_candidates", None)
-        st.session_state.pop("direccion_manchay_matches", None)
+    candidates = st.session_state.get("direccion_resoluciones_2026_candidates")
+    matches = st.session_state.get("direccion_resoluciones_2026_matches")
+    if candidates is not None and st.session_state.get("direccion_resoluciones_2026_sheet_id") != sheet_id:
+        st.session_state.pop("direccion_resoluciones_2026_candidates", None)
+        st.session_state.pop("direccion_resoluciones_2026_matches", None)
         candidates = None
         matches = None
     if candidates is None:
@@ -1280,12 +1289,12 @@ def render_direccion_update_tool(sheet_id):
     )
     st.dataframe(candidates, use_container_width=True, hide_index=True)
 
-    if st.button("2. Buscar coincidencias en BD local", key="match_direcciones_manchay", use_container_width=True):
+    if st.button("2. Buscar coincidencias en BD local", key="match_direcciones_resoluciones_2026", use_container_width=True):
         try:
             matches = build_direccion_matches_preview(candidates)
-            st.session_state["direccion_manchay_matches"] = matches
+            st.session_state["direccion_resoluciones_2026_matches"] = matches
         except Exception as exc:
-            st.session_state.pop("direccion_manchay_matches", None)
+            st.session_state.pop("direccion_resoluciones_2026_matches", None)
             st.error(f"No se pudo buscar en la BD local: {exc}")
             return
 
@@ -1311,7 +1320,7 @@ def render_direccion_update_tool(sheet_id):
         st.warning("No hay direcciones encontradas para escribir.")
         return
 
-    if st.button("Escribir direcciones encontradas", key="apply_direcciones_manchay", use_container_width=True):
+    if st.button("Escribir direcciones encontradas", key="apply_direcciones_resoluciones_2026", use_container_width=True):
         try:
             updated = apply_sheet_updates(
                 sheet_id,
@@ -1320,49 +1329,14 @@ def render_direccion_update_tool(sheet_id):
                 "direccion encontrada",
             )
             st.success(f"Se actualizaron {updated:,} filas en Google Sheets.")
-            st.session_state.pop("direccion_manchay_candidates", None)
-            st.session_state.pop("direccion_manchay_matches", None)
+            st.session_state.pop("direccion_resoluciones_2026_candidates", None)
+            st.session_state.pop("direccion_resoluciones_2026_matches", None)
         except Exception as exc:
             st.error(format_google_write_error(exc))
 
 
-def render_zona_manchay_update_tool(sheet_id):
-    st.subheader("Marcar ZONA = MANCHAY")
-    st.caption("Solo usa la columna SECTOR: si contiene MANCHAY y ZONA esta vacia, propone MANCHAY.")
-
-    if st.button("Previsualizar zonas Manchay", key="preview_zona_manchay", use_container_width=True):
-        try:
-            st.session_state["zona_manchay_preview"] = build_zona_manchay_preview(sheet_id)
-            st.session_state["zona_manchay_sheet_id"] = sheet_id
-        except Exception as exc:
-            st.session_state.pop("zona_manchay_preview", None)
-            st.error(f"No se pudo preparar la vista previa: {exc}")
-
-    preview = st.session_state.get("zona_manchay_preview")
-    if preview is not None and st.session_state.get("zona_manchay_sheet_id") != sheet_id:
-        st.session_state.pop("zona_manchay_preview", None)
-        preview = None
-    if preview is None:
-        return
-
-    if preview.empty:
-        st.info("No hay filas pendientes para marcar ZONA = MANCHAY.")
-        return
-
-    show_metric_row([("Filas a actualizar", f"{len(preview):,}")])
-    st.dataframe(preview, use_container_width=True, hide_index=True)
-
-    if st.button("Escribir ZONA = MANCHAY", key="apply_zona_manchay", use_container_width=True):
-        try:
-            updated = apply_sheet_updates(sheet_id, preview, "ZONA", "zona propuesta")
-            st.success(f"Se actualizaron {updated:,} filas en Google Sheets.")
-            st.session_state.pop("zona_manchay_preview", None)
-        except Exception as exc:
-            st.error(format_google_write_error(exc))
-
-
-def render_manchay_update_tools():
-    st.subheader("Actualizaciones de LICENCIAS MANCHAY 2025")
+def render_resoluciones_2026_update_tools():
+    st.subheader("Actualizaciones de RESOLUCIONES 2026")
     st.info(
         "Las vistas previas no escriben cambios. La escritura ocurre solo con el boton de confirmacion de cada bloque."
     )
@@ -1375,8 +1349,6 @@ def render_manchay_update_tools():
         return
 
     render_direccion_update_tool(sheet_id)
-    st.markdown("---")
-    render_zona_manchay_update_tool(sheet_id)
 
 
 def render_drive_refresh_button():
@@ -1996,7 +1968,7 @@ def show_licencias_funcionamiento_module():
     elif resumen_df.attrs.get("source") == "mixed":
         st.success("Histórico local conservado y años disponibles actualizados desde Google Drive.")
 
-    tabs = st.tabs(["General", "2023", "2024", "2025", "2026", "Actualizacion Manchay"])
+    tabs = st.tabs(["General", "2023", "2024", "2025", "2026", "Actualizar 2026"])
 
     with tabs[0]:
         render_general_licencias(detalle_df, resumen_df, tramites_df)
@@ -2006,4 +1978,4 @@ def show_licencias_funcionamiento_module():
             render_year_licencias(year, detalle_df, resumen_df, tramites_df)
 
     with tabs[5]:
-        render_manchay_update_tools()
+        render_resoluciones_2026_update_tools()
