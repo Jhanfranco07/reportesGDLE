@@ -53,7 +53,7 @@ MONTH_MAP = {
     12: "Diciembre",
 }
 
-DRIVE_TABS = ["RESOLUCIONES 2024", "RESOLUCIONES 2025", "RESOLUCIONES 2026"]
+DRIVE_TABS = ["RESOLUCIONES 2023", "RESOLUCIONES 2024", "RESOLUCIONES 2025", "RESOLUCIONES 2026"]
 
 PRIMARY_LICENSE_PROCEDURES = {
     "LICENCIA TEMPORAL",
@@ -108,6 +108,8 @@ ADDRESS_UPDATE_TAB = "RESOLUCIONES 2026"
 LICENSE_SHEET_ID_STATE_KEY = "licencias_update_sheet_id"
 
 EXPEDIENTE_COLUMNS = [
+    "EXPEDIENTE / D.S.",
+    "EXPEDIENTE / DS",
     "EDIENTE / D.S.",
     "EDIENTE / DS",
     "EDIENTE",
@@ -257,7 +259,8 @@ def normalize_licencias_drive_sheet(df_raw, tab_name):
     risk_data = df["TIPO DE ITSE"].apply(classify_itse)
     df["RIESGO_DETALLE"] = risk_data.apply(lambda item: item[0])
     df["RIESGO_AGRUPADO"] = risk_data.apply(lambda item: item[1])
-    df["PERIODO"] = df["FECHA_RESOLUCION"].dt.year.astype(str)
+    tab_year = re.search(r"(20\d{2})", str(tab_name))
+    df["PERIODO"] = tab_year.group(1) if tab_year else df["FECHA_RESOLUCION"].dt.year.astype(str)
     df["MES_NUM"] = df["FECHA_RESOLUCION"].dt.month
     df["MES"] = df["MES_NUM"].map(MONTH_MAP)
     df["TIPO_PROCEDIMIENTO"] = df["PROCEDIMIENTO_NORMALIZADO"].map(PROCEDURE_LABELS)
@@ -354,9 +357,6 @@ def load_licencias_funcionamiento_data():
 
     # Detalle transcrito del cuadro fuente
     detalle_data = [
-        {"PERIODO": "2023", "RIESGO_DETALLE": "MEDIO", "RIESGO_AGRUPADO": "MEDIO", "EXPEDIENTES": 500, "COSTO": 200.90, "TOTAL": 100450.00},
-        {"PERIODO": "2023", "RIESGO_DETALLE": "ALTOS Y MUY ALTOS", "RIESGO_AGRUPADO": "ALTOS Y MUY ALTOS", "EXPEDIENTES": 300, "COSTO": 678.90, "TOTAL": 203670.00},
-
         {"PERIODO": "2025", "RIESGO_DETALLE": "MEDIO", "RIESGO_AGRUPADO": "MEDIO", "EXPEDIENTES": 600, "COSTO": 200.90, "TOTAL": 120540.00},
         {"PERIODO": "2025", "RIESGO_DETALLE": "ALTOS Y MUY ALTOS", "RIESGO_AGRUPADO": "ALTOS Y MUY ALTOS", "EXPEDIENTES": 350, "COSTO": 678.90, "TOTAL": 237615.00},
 
@@ -374,7 +374,6 @@ def load_licencias_funcionamiento_data():
 
     # Resumen anual según el total consolidado mostrado en tu cuadro
     resumen_data = [
-        {"PERIODO": "2023", "EXPEDIENTES": 800, "RECAUDACION": 304120.00},
         {"PERIODO": "2025", "EXPEDIENTES": 950, "RECAUDACION": 358155.00},
         {"PERIODO": "2026 (Ene-Abr)", "EXPEDIENTES": 285, "RECAUDACION": 81673.00},
     ]
@@ -1135,14 +1134,24 @@ def find_column(df, candidates):
 
 
 def find_expediente_column(df):
-    direct_match = find_column(df, EXPEDIENTE_COLUMNS)
-    if direct_match is not None:
-        return direct_match
+    candidate_columns = [
+        column
+        for column in [normalize_column_name(candidate) for candidate in EXPEDIENTE_COLUMNS]
+        if column in df.columns
+    ]
+    for column in candidate_columns:
+        values = df[column].fillna("").astype(str).str.strip()
+        if values.ne("").any():
+            return column
 
     for column in df.columns:
         normalized = normalize_text(column)
         if "EXPEDIENT" in normalized or "EDIENTE" in normalized:
-            return column
+            values = df[column].fillna("").astype(str).str.strip()
+            if values.ne("").any():
+                return column
+    if candidate_columns:
+        return candidate_columns[0]
     return None
 
 
