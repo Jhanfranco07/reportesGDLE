@@ -187,6 +187,7 @@ ADDRESS_UPDATE_CONFIGS = {
 }
 ADDRESS_UPDATE_TAB = "RESOLUCIONES 2026"
 LICENSE_SHEET_ID_STATE_KEY = "licencias_update_sheet_id"
+ZONA_SEARCH_VERSION = "licenses_only_direction_sector_v2"
 
 EXPEDIENTE_COLUMNS = [
     "EXPEDIENTE / D.S.",
@@ -2007,6 +2008,7 @@ def render_zona_search_update_tool(sheet_id, tab_name):
             st.session_state["zona_tab_name"] = tab_name
             st.session_state["zona_search"] = search_text
             st.session_state["zona_value"] = zone_value
+            st.session_state["zona_search_version"] = ZONA_SEARCH_VERSION
         except Exception as exc:
             st.session_state.pop("zona_preview", None)
             st.error(f"No se pudo preparar la vista previa: {exc}")
@@ -2015,11 +2017,17 @@ def render_zona_search_update_tool(sheet_id, tab_name):
     if preview is not None and (
         st.session_state.get("zona_sheet_id") != sheet_id
         or st.session_state.get("zona_tab_name") != tab_name
+        or st.session_state.get("zona_search_version") != ZONA_SEARCH_VERSION
     ):
         st.session_state.pop("zona_preview", None)
         preview = None
     if preview is None:
         return
+
+    if "tipo" in preview.columns:
+        preview = preview[
+            preview["tipo"].map(lambda value: normalize_license_procedure(value) in PRIMARY_LICENSE_PROCEDURES)
+        ].copy()
 
     if preview.empty:
         st.info("No hay filas pendientes para la busqueda indicada.")
@@ -2048,6 +2056,10 @@ def render_zona_search_update_tool(sheet_id, tab_name):
         edited_preview["aplicar"].fillna(False)
         & edited_preview["zona propuesta"].astype(str).str.strip().ne("")
     ].copy()
+    if "tipo" in selected_preview.columns:
+        selected_preview = selected_preview[
+            selected_preview["tipo"].map(lambda value: normalize_license_procedure(value) in PRIMARY_LICENSE_PROCEDURES)
+        ].copy()
     show_metric_row(
         [
             ("Encontradas", f"{len(preview):,}"),
