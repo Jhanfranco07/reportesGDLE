@@ -1628,12 +1628,6 @@ def build_zona_search_preview(sheet_id, search_text, zone_value, tab_name=ADDRES
         for column in [
             "DIRECCION DEL ESTABLECIMIENTO",
             "SECTOR",
-            "APELLIDOS Y NOMBRES / RAZON SOCIAL",
-            expediente_col,
-            resolution_col,
-            procedure_col,
-            "GIRO / ACTIVIDAD COMERCIAL",
-            "GIRO DEL NEGOCIO",
         ]
         if column and column in sheet_df.columns
     ]
@@ -1992,7 +1986,7 @@ def render_risk_update_tool(sheet_id, tab_name, db_paths):
 def render_zona_search_update_tool(sheet_id, tab_name):
     st.subheader("Completar ZONA por busqueda de palabras clave")
     st.caption(
-        f"Hoja objetivo: {tab_name}. Busca texto en direccion, sector, razon social, expediente, resolucion y tipo; "
+        f"Hoja objetivo: {tab_name}. Busca texto solo en direccion y sector; "
         "muestra solo filas con ZONA vacia y permite validar una por una antes de escribir."
     )
 
