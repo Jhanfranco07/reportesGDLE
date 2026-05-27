@@ -173,6 +173,10 @@ ADDRESS_UPDATE_CONFIGS = {
         Path("script/data/BASE DE DATOS 2026 - REGISTRO.xlsx"),
         Path("script/data/BASE DE DATOS 2025 - REGISTRO.xlsx"),
     ],
+    "RESOLUCIONES 2025": [
+        Path("script/data/BASE DE DATOS 2025 - REGISTRO.xlsx"),
+        Path("script/data/BASE DE DATOS 2024 - REGISTRO.xlsx"),
+    ],
     "RESOLUCIONES 2024": [
         Path("script/data/BASE DE DATOS 2024 - REGISTRO.xlsx"),
         Path("script/data/BASE DE DATOS 2023 - REGISTRO.xlsx"),
