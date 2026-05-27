@@ -1614,6 +1614,15 @@ def build_zona_search_preview(sheet_id, search_text, zone_value, tab_name=ADDRES
     expediente_col = find_expediente_column(sheet_df)
     resolution_col = find_resolution_column(sheet_df)
     procedure_col = get_sheet_procedure_column(sheet_df)
+    if procedure_col is None:
+        raise ValueError("No se encontro la columna de tipo de licencia para filtrar solo licencias.")
+
+    sheet_df = sheet_df.copy()
+    sheet_df["PROCEDIMIENTO_NORMALIZADO"] = sheet_df[procedure_col].map(normalize_license_procedure)
+    sheet_df = sheet_df[sheet_df["PROCEDIMIENTO_NORMALIZADO"].isin(PRIMARY_LICENSE_PROCEDURES)].copy()
+    if sheet_df.empty:
+        return pd.DataFrame()
+
     searchable_columns = [
         column
         for column in [
@@ -1646,7 +1655,7 @@ def build_zona_search_preview(sheet_id, search_text, zone_value, tab_name=ADDRES
                 "resolucion": row.get(resolution_col, "") if resolution_col else "",
                 "expediente": row.get(expediente_col, "") if expediente_col else "",
                 "razon social": row.get("APELLIDOS Y NOMBRES / RAZON SOCIAL", ""),
-                "tipo": row.get(procedure_col, "") if procedure_col else "",
+                "tipo": row.get(procedure_col, ""),
                 "direccion": row.get("DIRECCION DEL ESTABLECIMIENTO", ""),
                 "sector": row.get("SECTOR", ""),
                 "zona actual": row.get("ZONA", ""),
