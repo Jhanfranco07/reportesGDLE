@@ -146,12 +146,27 @@ def polish_bar_traces(fig, text_color="#344054"):
     return fig
 
 DATE_COLUMNS = ["FECHA RESOLUCION", "FECHA RESOLUC.", "FECHA RESOLUC", "FEC.RESOLUC.", "FEC.RESOLUC"]
+ZONE_REFERENCE_PATH = Path("script/data/LIC - 2023-2026 - VIGENTES - EMISION.xlsx")
+ZONE_REFERENCE_SHEET = "DATA 2023-2024-2025-2026"
+ZONE_LABELS = {
+    "1": "ZONA 1 - PACHACAMAC HISTORICO",
+    "2": "ZONA 2 - PAUL POBLET LIND",
+    "3": "ZONA 3 - CENTROS POBLADOS RURALES",
+    "4": "ZONA 4 - JOSE GALVEZ BARRENECHEA",
+    "5": "ZONA 5 - MANCHAY",
+}
+ZONE_ORDER = list(ZONE_LABELS.values()) + ["SIN ZONA"]
 ZONE_COLORS = {
-    "MANCHAY": "#2f9e8f",
-    "PACHACAMAC": "#3498db",
-    "JOSE GALVEZ": "#f39c12",
+    "ZONA 1 - PACHACAMAC HISTORICO": "#1f77b4",
+    "ZONA 2 - PAUL POBLET LIND": "#8e44ad",
+    "ZONA 3 - CENTROS POBLADOS RURALES": "#16a085",
+    "ZONA 4 - JOSE GALVEZ BARRENECHEA": "#f39c12",
+    "ZONA 5 - MANCHAY": "#2f9e44",
     "SIN ZONA": "#7f8c8d",
     "OTRAS ZONAS": "#9b59b6",
+    "MANCHAY": "#2f9e44",
+    "PACHACAMAC": "#1f77b4",
+    "JOSE GALVEZ": "#f39c12",
 }
 ADDRESS_UPDATE_CONFIGS = {
     "RESOLUCIONES 2026": [
@@ -283,12 +298,24 @@ def normalize_zone(value):
     text = normalize_text(value)
     if not text:
         return "SIN ZONA"
-    if "MANCHAY" in text:
-        return "MANCHAY"
-    if "PACHACAMAC" in text:
-        return "PACHACAMAC"
+    numeric_match = re.fullmatch(r"([1-5])(?:\.0+)?", text)
+    if numeric_match:
+        return ZONE_LABELS[numeric_match.group(1)]
+    zone_match = re.search(r"ZONA\s*([1-5])", text)
+    if zone_match:
+        return ZONE_LABELS[zone_match.group(1)]
+    if "PAUL" in text and "POBLET" in text:
+        return ZONE_LABELS["2"]
+    if "CENTRO" in text and "POBLADO" in text:
+        return ZONE_LABELS["3"]
+    if "RURAL" in text and ("CENTRO" in text or "POBLADO" in text):
+        return ZONE_LABELS["3"]
     if "JOSE" in text and ("GALVEZ" in text or "GALVES" in text):
-        return "JOSE GALVEZ"
+        return ZONE_LABELS["4"]
+    if "MANCHAY" in text:
+        return ZONE_LABELS["5"]
+    if "PACHACAMAC" in text:
+        return ZONE_LABELS["1"]
     return text
 
 
@@ -967,10 +994,14 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
         zoned.groupby("ZONA_NORMALIZADA", observed=False)
         .agg(LICENCIAS=("FECHA_RESOLUCION", "size"), RECAUDACION=("COSTO_NUM", "sum"))
         .reset_index()
-        .sort_values("LICENCIAS", ascending=False)
     )
+    resumen["ZONA_ORDEN"] = resumen["ZONA_NORMALIZADA"].map(
+        {zone: index for index, zone in enumerate(ZONE_ORDER)}
+    ).fillna(len(ZONE_ORDER)).astype(int)
+    resumen = resumen.sort_values(["ZONA_ORDEN", "ZONA_NORMALIZADA"])
 
-    resumen_chart = resumen.sort_values("LICENCIAS", ascending=True).copy()
+    zone_category_order = resumen["ZONA_NORMALIZADA"].tolist()
+    resumen_chart = resumen.sort_values(["ZONA_ORDEN", "ZONA_NORMALIZADA"], ascending=False).copy()
     fig = px.bar(
         resumen_chart,
         x="LICENCIAS",
@@ -985,9 +1016,9 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
     polish_bar_traces(fig)
     fig.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False)
     apply_chart_style(fig, height=max(360, len(resumen_chart) * 82))
-    fig.update_layout(showlegend=False, margin=dict(l=110, r=90, t=32, b=40))
+    fig.update_layout(showlegend=False, margin=dict(l=220, r=90, t=32, b=40))
     fig.update_xaxes(title="Licencias emitidas")
-    fig.update_yaxes(title="Zona", categoryorder="array", categoryarray=resumen_chart["ZONA_NORMALIZADA"].tolist())
+    fig.update_yaxes(title="Zona", categoryorder="array", categoryarray=zone_category_order)
     st.plotly_chart(fig, use_container_width=True, key=f"licencias_zona_{chart_key}")
 
     total_licencias = int(resumen["LICENCIAS"].sum())
@@ -1008,17 +1039,20 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
         polish_bar_traces(fig_pct)
         fig_pct.update_traces(texttemplate="%{x:.1f}%", textposition="outside", cliponaxis=False)
         apply_chart_style(fig_pct, height=max(360, len(resumen_pct) * 82))
-        fig_pct.update_layout(showlegend=False, margin=dict(l=110, r=90, t=32, b=40))
+        fig_pct.update_layout(showlegend=False, margin=dict(l=220, r=90, t=32, b=40))
         fig_pct.update_xaxes(title="% del total de licencias emitidas", ticksuffix="%")
-        fig_pct.update_yaxes(title="Zona", categoryorder="array", categoryarray=resumen_chart["ZONA_NORMALIZADA"].tolist())
+        fig_pct.update_yaxes(title="Zona", categoryorder="array", categoryarray=zone_category_order)
         st.plotly_chart(fig_pct, use_container_width=True, key=f"licencias_zona_pct_{chart_key}")
 
     tipo_zona = (
         zoned.groupby(["ZONA_NORMALIZADA", "TIPO_PROCEDIMIENTO"], observed=False)
         .agg(LICENCIAS=("FECHA_RESOLUCION", "size"))
         .reset_index()
-        .sort_values(["ZONA_NORMALIZADA", "TIPO_PROCEDIMIENTO"])
     )
+    tipo_zona["ZONA_ORDEN"] = tipo_zona["ZONA_NORMALIZADA"].map(
+        {zone: index for index, zone in enumerate(ZONE_ORDER)}
+    ).fillna(len(ZONE_ORDER)).astype(int)
+    tipo_zona = tipo_zona.sort_values(["ZONA_ORDEN", "TIPO_PROCEDIMIENTO"])
 
     fig_tipo = px.bar(
         tipo_zona,
@@ -1039,9 +1073,10 @@ def render_zone_license_report(tramites_df, year=None, key_suffix=None):
     fig_tipo.update_traces(textposition="inside", insidetextanchor="middle")
     apply_chart_style(fig_tipo, legend_title="Tipo", height=410)
     fig_tipo.update_layout(xaxis_title="Zona", yaxis_title="Licencias emitidas")
+    fig_tipo.update_xaxes(categoryorder="array", categoryarray=zone_category_order)
     st.plotly_chart(fig_tipo, use_container_width=True, key=f"licencias_zona_tipo_{chart_key}")
 
-    tabla = resumen.rename(
+    tabla = resumen.drop(columns=["ZONA_ORDEN"], errors="ignore").rename(
         columns={
             "ZONA_NORMALIZADA": "Zona",
             "LICENCIAS": "Licencias",
@@ -1205,6 +1240,28 @@ def normalize_expediente(value):
     return text.lstrip("0")
 
 
+def normalize_resolution_key(value):
+    text = normalize_text(value)
+    text = re.sub(r"[^0-9A-Z]+", "-", text).strip("-")
+    parts = text.split("-")
+    if len(parts) >= 2 and parts[0].isdigit() and re.fullmatch(r"20\d{2}", parts[1]):
+        parts[0] = str(int(parts[0]))
+    return "-".join(parts)
+
+
+def normalize_match_name(value):
+    return re.sub(r"[^0-9A-Z]+", "", normalize_text(value))
+
+
+def normalize_reference_procedure(value):
+    text = normalize_text(value)
+    if "TEMPORAL" in text:
+        return "LICENCIA TEMPORAL"
+    if "INDETERMINADA" in text:
+        return "LICENCIA INDETERMINADA"
+    return normalize_license_procedure(text)
+
+
 def get_configured_license_sheet_id():
     try:
         return extract_google_sheet_id(get_secret_value("GOOGLE_SHEET_ID"))
@@ -1259,6 +1316,14 @@ def find_expediente_column(df):
 
 def find_risk_column(df):
     return first_existing_column(df, ["TIPO DE ITSE", "TIPO ITSE", "RIESGO"])
+
+
+def find_resolution_column(df):
+    for column in df.columns:
+        text = normalize_text(column)
+        if "RESOLUCION" in text and "R.R" not in text:
+            return column
+    return None
 
 
 def read_excel_with_detected_headers(path, sheet_name):
@@ -1570,6 +1635,142 @@ def build_zona_search_preview(sheet_id, search_text, zone_value, tab_name=ADDRES
     return pd.DataFrame(rows)
 
 
+@st.cache_data(show_spinner=False)
+def load_zone_reference_database(path_text=str(ZONE_REFERENCE_PATH)):
+    path = Path(path_text)
+    if not path.exists():
+        raise FileNotFoundError(f"No se encontro el Excel de zonas: {path}")
+
+    df = pd.read_excel(path, sheet_name=ZONE_REFERENCE_SHEET)
+    df.columns = [normalize_column_name(column) for column in df.columns]
+    df = df.loc[:, [bool(column) for column in df.columns]]
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+
+    required = [
+        "PERIODO",
+        "EXPEDIENTE",
+        "RESOLUCION",
+        "APELLIDOS Y NOMBRES / RAZON SOCIAL",
+        "ZONA",
+    ]
+    require_sheet_columns(df, required)
+
+    procedure_col = first_existing_column(df, ["OTROS", "TIPO DE PROCEDIMIENTO", "ASUNTO", "VIGENCIA"])
+    if procedure_col is None:
+        raise ValueError("El Excel de zonas no tiene una columna de tipo de licencia para validar.")
+
+    out = df.copy()
+    out["PERIODO_KEY"] = out["PERIODO"].astype(str).str.extract(r"(20\d{2})")[0]
+    out["EXPEDIENTE_KEY"] = out["EXPEDIENTE"].map(normalize_expediente)
+    out["RESOLUCION_KEY"] = out["RESOLUCION"].map(normalize_resolution_key)
+    out["NOMBRE_KEY"] = out["APELLIDOS Y NOMBRES / RAZON SOCIAL"].map(normalize_match_name)
+    out["PROCEDIMIENTO_NORMALIZADO"] = out[procedure_col].map(normalize_reference_procedure)
+    out["ZONA_NUMERO"] = out["ZONA"].astype(str).str.extract(r"([1-5])")[0]
+    out["ZONA_PROPUESTA"] = out["ZONA_NUMERO"].map(ZONE_LABELS).fillna("")
+    out = out[
+        (out["PERIODO_KEY"].notna())
+        & (out["EXPEDIENTE_KEY"] != "")
+        & (out["RESOLUCION_KEY"] != "")
+        & (out["ZONA_PROPUESTA"] != "")
+        & (out["PROCEDIMIENTO_NORMALIZADO"].isin(PRIMARY_LICENSE_PROCEDURES))
+    ].copy()
+    out = out.drop_duplicates(
+        subset=["PERIODO_KEY", "EXPEDIENTE_KEY", "RESOLUCION_KEY", "NOMBRE_KEY", "PROCEDIMIENTO_NORMALIZADO"],
+        keep="first",
+    )
+    return out
+
+
+def build_zone_reference_preview(sheet_id, tab_name, only_blank_zone=True):
+    _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, tab_name)
+    require_sheet_columns(sheet_df, ["ZONA", "APELLIDOS Y NOMBRES / RAZON SOCIAL"])
+
+    procedure_col = get_sheet_procedure_column(sheet_df)
+    expediente_col = find_expediente_column(sheet_df)
+    resolution_col = find_resolution_column(sheet_df)
+    name_col = "APELLIDOS Y NOMBRES / RAZON SOCIAL"
+    if procedure_col is None or expediente_col is None or resolution_col is None:
+        raise ValueError("La hoja no tiene columnas suficientes para cruzar zona por tipo, expediente y resolucion.")
+
+    year_match = re.search(r"(20\d{2})", str(tab_name))
+    tab_year = year_match.group(1) if year_match else ""
+    reference_df = load_zone_reference_database()
+    if tab_year:
+        reference_df = reference_df[reference_df["PERIODO_KEY"] == tab_year].copy()
+    if reference_df.empty:
+        return pd.DataFrame()
+
+    sheet_df = sheet_df.copy()
+    sheet_df["PROCEDIMIENTO_NORMALIZADO"] = sheet_df[procedure_col].map(normalize_license_procedure)
+    sheet_df = sheet_df[sheet_df["PROCEDIMIENTO_NORMALIZADO"].isin(PRIMARY_LICENSE_PROCEDURES)].copy()
+    if only_blank_zone:
+        sheet_df = sheet_df[sheet_df["ZONA"].map(is_blank)].copy()
+    if sheet_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    reference_by_exp = {
+        key: group.copy()
+        for key, group in reference_df.groupby("EXPEDIENTE_KEY", observed=False)
+        if key
+    }
+    for _, row in sheet_df.iterrows():
+        expediente_key = normalize_expediente(row.get(expediente_col, ""))
+        resolution_key = normalize_resolution_key(row.get(resolution_col, ""))
+        name_key = normalize_match_name(row.get(name_col, ""))
+        procedure = row.get("PROCEDIMIENTO_NORMALIZADO", "")
+        candidates = reference_by_exp.get(expediente_key, pd.DataFrame())
+        if candidates.empty:
+            continue
+
+        scored = candidates.copy()
+        scored["MATCH_RESOLUCION"] = scored["RESOLUCION_KEY"] == resolution_key
+        scored["MATCH_RAZON_SOCIAL"] = scored["NOMBRE_KEY"] == name_key
+        scored["MATCH_TIPO"] = scored["PROCEDIMIENTO_NORMALIZADO"] == procedure
+        scored["SCORE"] = (
+            scored["MATCH_RESOLUCION"].astype(int) * 4
+            + scored["MATCH_RAZON_SOCIAL"].astype(int) * 2
+            + scored["MATCH_TIPO"].astype(int) * 2
+        )
+        scored = scored.sort_values(["SCORE", "MATCH_RESOLUCION", "MATCH_RAZON_SOCIAL", "MATCH_TIPO"], ascending=False)
+        best = scored.iloc[0]
+        if not bool(best["MATCH_RESOLUCION"]) and not (bool(best["MATCH_RAZON_SOCIAL"]) and bool(best["MATCH_TIPO"])):
+            continue
+
+        if bool(best["MATCH_RESOLUCION"]) and bool(best["MATCH_RAZON_SOCIAL"]) and bool(best["MATCH_TIPO"]):
+            estado = "COINCIDENCIA COMPLETA"
+            aplicar = True
+        elif bool(best["MATCH_RESOLUCION"]) and bool(best["MATCH_TIPO"]):
+            estado = "COINCIDENCIA FUERTE"
+            aplicar = True
+        else:
+            estado = "REVISAR COINCIDENCIA"
+            aplicar = False
+
+        rows.append(
+            {
+                "aplicar": aplicar,
+                "fila": int(row["__SHEET_ROW"]),
+                "estado": estado,
+                "zona actual": row.get("ZONA", ""),
+                "zona propuesta": best.get("ZONA_PROPUESTA", ""),
+                "expediente drive": row.get(expediente_col, ""),
+                "expediente excel": best.get("EXPEDIENTE", ""),
+                "resolucion drive": row.get(resolution_col, ""),
+                "resolucion excel": best.get("RESOLUCION", ""),
+                "razon social drive": row.get(name_col, ""),
+                "razon social excel": best.get("APELLIDOS Y NOMBRES / RAZON SOCIAL", ""),
+                "tipo drive": row.get(procedure_col, ""),
+                "tipo excel": best.get("OTROS", best.get("PROCEDIMIENTO_NORMALIZADO", "")),
+                "valida resolucion": "SI" if bool(best["MATCH_RESOLUCION"]) else "NO",
+                "valida razon social": "SI" if bool(best["MATCH_RAZON_SOCIAL"]) else "NO",
+                "valida tipo": "SI" if bool(best["MATCH_TIPO"]) else "NO",
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def format_google_write_error(exc):
     message = str(exc)
     if "403" in message or "does not have permission" in message:
@@ -1835,6 +2036,117 @@ def render_zona_search_update_tool(sheet_id, tab_name):
             st.error(format_google_write_error(exc))
 
 
+def render_zone_reference_update_tool(sheet_id, tab_name):
+    st.subheader("Completar ZONA desde DATA 2023-2026")
+    st.caption(
+        f"Hoja objetivo: {tab_name}. Cruza contra {ZONE_REFERENCE_PATH.name} / {ZONE_REFERENCE_SHEET} "
+        "usando expediente, resolucion, razon social y tipo de licencia."
+    )
+
+    key_suffix = normalize_text(tab_name).replace(" ", "_")
+    only_blank_zone = st.checkbox(
+        "Solo filas con ZONA vacia",
+        value=True,
+        key=f"zone_reference_only_blank_{key_suffix}",
+    )
+
+    if st.button("Buscar zonas en DATA 2023-2026", key=f"preview_zone_reference_{key_suffix}", use_container_width=True):
+        try:
+            st.session_state["zone_reference_preview"] = build_zone_reference_preview(
+                sheet_id,
+                tab_name,
+                only_blank_zone=only_blank_zone,
+            )
+            st.session_state["zone_reference_sheet_id"] = sheet_id
+            st.session_state["zone_reference_tab_name"] = tab_name
+            st.session_state["zone_reference_only_blank"] = only_blank_zone
+        except Exception as exc:
+            st.session_state.pop("zone_reference_preview", None)
+            st.error(f"No se pudo preparar la vista previa: {exc}")
+
+    preview = st.session_state.get("zone_reference_preview")
+    if preview is not None and (
+        st.session_state.get("zone_reference_sheet_id") != sheet_id
+        or st.session_state.get("zone_reference_tab_name") != tab_name
+        or st.session_state.get("zone_reference_only_blank") != only_blank_zone
+    ):
+        st.session_state.pop("zone_reference_preview", None)
+        preview = None
+    if preview is None:
+        return
+
+    if preview.empty:
+        st.info("No se encontraron coincidencias para completar ZONA con la DATA 2023-2026.")
+        return
+
+    complete_count = int((preview["estado"] == "COINCIDENCIA COMPLETA").sum())
+    strong_count = int((preview["estado"] == "COINCIDENCIA FUERTE").sum())
+    review_count = int((preview["estado"] == "REVISAR COINCIDENCIA").sum())
+    show_metric_row(
+        [
+            ("Coincidencia completa", f"{complete_count:,}"),
+            ("Coincidencia fuerte", f"{strong_count:,}"),
+            ("Por revisar", f"{review_count:,}"),
+        ]
+    )
+
+    edited_preview = st.data_editor(
+        preview,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "aplicar": st.column_config.CheckboxColumn("Aplicar"),
+            "fila": st.column_config.NumberColumn("Fila", format="%d"),
+            "estado": st.column_config.TextColumn("Estado"),
+            "zona actual": st.column_config.TextColumn("Zona actual"),
+            "zona propuesta": st.column_config.TextColumn("Zona propuesta"),
+            "expediente drive": st.column_config.TextColumn("Expediente Drive"),
+            "expediente excel": st.column_config.TextColumn("Expediente Excel"),
+            "resolucion drive": st.column_config.TextColumn("Resolucion Drive"),
+            "resolucion excel": st.column_config.TextColumn("Resolucion Excel"),
+            "razon social drive": st.column_config.TextColumn("Razon social Drive"),
+            "razon social excel": st.column_config.TextColumn("Razon social Excel"),
+            "tipo drive": st.column_config.TextColumn("Tipo Drive"),
+            "tipo excel": st.column_config.TextColumn("Tipo Excel"),
+        },
+        disabled=[
+            "fila",
+            "estado",
+            "zona actual",
+            "expediente drive",
+            "expediente excel",
+            "resolucion drive",
+            "resolucion excel",
+            "razon social drive",
+            "razon social excel",
+            "tipo drive",
+            "tipo excel",
+            "valida resolucion",
+            "valida razon social",
+            "valida tipo",
+        ],
+        key=f"zone_reference_editor_{key_suffix}",
+    )
+    selected_preview = edited_preview[
+        edited_preview["aplicar"].fillna(False)
+        & edited_preview["zona propuesta"].astype(str).str.strip().ne("")
+    ].copy()
+    show_metric_row(
+        [
+            ("Encontradas", f"{len(preview):,}"),
+            ("Seleccionadas", f"{len(selected_preview):,}"),
+        ]
+    )
+
+    if st.button("Escribir zonas seleccionadas desde DATA", key=f"apply_zone_reference_{key_suffix}", use_container_width=True):
+        try:
+            updated = apply_sheet_updates(sheet_id, selected_preview, "ZONA", "zona propuesta", tab_name=tab_name)
+            st.success(f"Se actualizaron {updated:,} filas en Google Sheets.")
+            st.session_state.pop("zone_reference_preview", None)
+        except Exception as exc:
+            st.error(format_google_write_error(exc))
+
+
 def render_resoluciones_2026_update_tools():
     st.subheader("Actualizaciones de resoluciones")
     st.info(
@@ -1860,6 +2172,8 @@ def render_resoluciones_2026_update_tools():
     render_direccion_update_tool(sheet_id, tab_name, db_paths)
     st.markdown("---")
     render_risk_update_tool(sheet_id, tab_name, db_paths)
+    st.markdown("---")
+    render_zone_reference_update_tool(sheet_id, tab_name)
     st.markdown("---")
     render_zona_search_update_tool(sheet_id, tab_name)
 
