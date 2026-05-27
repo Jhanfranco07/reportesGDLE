@@ -1601,18 +1601,34 @@ def apply_sheet_updates(sheet_id, preview_df, target_column, value_column, tab_n
 
 def build_zona_search_preview(sheet_id, search_text, zone_value, tab_name=ADDRESS_UPDATE_TAB):
     _, sheet_df, _ = read_google_worksheet_with_rows(sheet_id, tab_name)
-    require_sheet_columns(sheet_df, ["DIRECCION DEL ESTABLECIMIENTO", "SECTOR", "ZONA"])
+    require_sheet_columns(sheet_df, ["ZONA"])
 
     tokens = re.findall(r"[0-9A-Z]+", normalize_text(search_text))
     if not tokens:
         return pd.DataFrame()
 
+    expediente_col = find_expediente_column(sheet_df)
+    resolution_col = find_resolution_column(sheet_df)
+    procedure_col = get_sheet_procedure_column(sheet_df)
+    searchable_columns = [
+        column
+        for column in [
+            "DIRECCION DEL ESTABLECIMIENTO",
+            "SECTOR",
+            "APELLIDOS Y NOMBRES / RAZON SOCIAL",
+            expediente_col,
+            resolution_col,
+            procedure_col,
+            "GIRO / ACTIVIDAD COMERCIAL",
+            "GIRO DEL NEGOCIO",
+        ]
+        if column and column in sheet_df.columns
+    ]
+    if not searchable_columns:
+        raise ValueError("No se encontraron columnas para buscar coincidencias de zona.")
+
     def matches_search(row):
-        haystack = (
-            normalize_text(row.get("DIRECCION DEL ESTABLECIMIENTO", ""))
-            + " "
-            + normalize_text(row.get("SECTOR", ""))
-        )
+        haystack = " ".join(normalize_text(row.get(column, "")) for column in searchable_columns)
         return all(token in haystack for token in tokens)
 
     mask = sheet_df["ZONA"].map(is_blank) & sheet_df.apply(matches_search, axis=1)
@@ -1623,12 +1639,14 @@ def build_zona_search_preview(sheet_id, search_text, zone_value, tab_name=ADDRES
             {
                 "aplicar": True,
                 "fila": int(row["__SHEET_ROW"]),
-                "resolucion sg": row.get("RESOLUCION DE SG", ""),
-                "expediente": row.get("EXPEDIENTE / D.S.", ""),
+                "resolucion": row.get(resolution_col, "") if resolution_col else "",
+                "expediente": row.get(expediente_col, "") if expediente_col else "",
+                "razon social": row.get("APELLIDOS Y NOMBRES / RAZON SOCIAL", ""),
+                "tipo": row.get(procedure_col, "") if procedure_col else "",
                 "direccion": row.get("DIRECCION DEL ESTABLECIMIENTO", ""),
                 "sector": row.get("SECTOR", ""),
                 "zona actual": row.get("ZONA", ""),
-                "zona propuesta": str(zone_value).strip().upper(),
+                "zona propuesta": normalize_zone(zone_value),
             }
         )
 
@@ -1959,15 +1977,16 @@ def render_risk_update_tool(sheet_id, tab_name, db_paths):
 
 
 def render_zona_search_update_tool(sheet_id, tab_name):
-    st.subheader("Completar ZONA por busqueda")
+    st.subheader("Completar ZONA por busqueda de palabras clave")
     st.caption(
-        f"Hoja objetivo: {tab_name}. Busca texto en DIRECCION DEL ESTABLECIMIENTO y SECTOR, "
+        f"Hoja objetivo: {tab_name}. Busca texto en direccion, sector, razon social, expediente, resolucion y tipo; "
         "muestra solo filas con ZONA vacia y permite validar una por una antes de escribir."
     )
 
     key_suffix = normalize_text(tab_name).replace(" ", "_")
-    search_text = st.text_input("Buscar en direccion o sector", value="MANCHAY", key=f"zona_search_text_{key_suffix}")
-    zone_value = st.text_input("Zona a escribir", value="MANCHAY", key=f"zona_value_{key_suffix}")
+    zone_options = list(ZONE_LABELS.values())
+    search_text = st.text_input("Buscar palabra clave", value="MANCHAY", key=f"zona_search_text_{key_suffix}")
+    zone_value = st.selectbox("Zona a escribir", options=zone_options, index=4, key=f"zona_value_{key_suffix}")
 
     if st.button("Buscar filas para completar zona", key=f"preview_zona_{key_suffix}", use_container_width=True):
         try:
@@ -2006,14 +2025,16 @@ def render_zona_search_update_tool(sheet_id, tab_name):
         column_config={
             "aplicar": st.column_config.CheckboxColumn("Aplicar"),
             "fila": st.column_config.NumberColumn("Fila", format="%d"),
-            "resolucion sg": st.column_config.TextColumn("Resolucion SG"),
+            "resolucion": st.column_config.TextColumn("Resolucion"),
             "expediente": st.column_config.TextColumn("Expediente"),
+            "razon social": st.column_config.TextColumn("Razon social"),
+            "tipo": st.column_config.TextColumn("Tipo"),
             "direccion": st.column_config.TextColumn("Direccion"),
             "sector": st.column_config.TextColumn("Sector"),
             "zona actual": st.column_config.TextColumn("Zona actual"),
             "zona propuesta": st.column_config.TextColumn("Zona propuesta"),
         },
-        disabled=["fila", "resolucion sg", "expediente", "direccion", "sector", "zona actual"],
+        disabled=["fila", "resolucion", "expediente", "razon social", "tipo", "direccion", "sector", "zona actual"],
         key=f"zona_editor_{key_suffix}",
     )
     selected_preview = edited_preview[
@@ -2172,8 +2193,6 @@ def render_resoluciones_2026_update_tools():
     render_direccion_update_tool(sheet_id, tab_name, db_paths)
     st.markdown("---")
     render_risk_update_tool(sheet_id, tab_name, db_paths)
-    st.markdown("---")
-    render_zone_reference_update_tool(sheet_id, tab_name)
     st.markdown("---")
     render_zona_search_update_tool(sheet_id, tab_name)
 
