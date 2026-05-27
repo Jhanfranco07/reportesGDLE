@@ -187,7 +187,7 @@ ADDRESS_UPDATE_CONFIGS = {
 }
 ADDRESS_UPDATE_TAB = "RESOLUCIONES 2026"
 LICENSE_SHEET_ID_STATE_KEY = "licencias_update_sheet_id"
-ZONA_SEARCH_VERSION = "licenses_only_direction_sector_v2"
+ZONA_SEARCH_VERSION = "licenses_only_direction_sector_v3"
 
 EXPEDIENTE_COLUMNS = [
     "EXPEDIENTE / D.S.",
@@ -1649,7 +1649,6 @@ def build_zona_search_preview(sheet_id, search_text, zone_value, tab_name=ADDRES
                 "fila": int(row["__SHEET_ROW"]),
                 "resolucion": row.get(resolution_col, "") if resolution_col else "",
                 "expediente": row.get(expediente_col, "") if expediente_col else "",
-                "razon social": row.get("APELLIDOS Y NOMBRES / RAZON SOCIAL", ""),
                 "tipo": row.get(procedure_col, ""),
                 "direccion": row.get("DIRECCION DEL ESTABLECIMIENTO", ""),
                 "sector": row.get("SECTOR", ""),
@@ -2042,14 +2041,13 @@ def render_zona_search_update_tool(sheet_id, tab_name):
             "fila": st.column_config.NumberColumn("Fila", format="%d"),
             "resolucion": st.column_config.TextColumn("Resolucion"),
             "expediente": st.column_config.TextColumn("Expediente"),
-            "razon social": st.column_config.TextColumn("Razon social"),
             "tipo": st.column_config.TextColumn("Tipo"),
             "direccion": st.column_config.TextColumn("Direccion"),
             "sector": st.column_config.TextColumn("Sector"),
             "zona actual": st.column_config.TextColumn("Zona actual"),
             "zona propuesta": st.column_config.TextColumn("Zona propuesta"),
         },
-        disabled=["fila", "resolucion", "expediente", "razon social", "tipo", "direccion", "sector", "zona actual"],
+        disabled=["fila", "resolucion", "expediente", "tipo", "direccion", "sector", "zona actual"],
         key=f"zona_editor_{key_suffix}",
     )
     selected_preview = edited_preview[
