@@ -918,9 +918,7 @@ def show_comercio_ambulatorio_module():
         st.error("No se pudieron cargar los datos.")
         return
 
-    recaud_df = load_comercio_ambulatorio_recaudacion_data()
     fuente = df.attrs.get("source")
-    usa_drive = fuente in {"drive", "mixed"}
 
     if fuente == "mixed":
         st.success("Historico local conservado y ano actual actualizado desde Google Drive.")
@@ -945,26 +943,4 @@ def show_comercio_ambulatorio_module():
     tabla_resumen(df)
     st.markdown("---")
 
-    estadisticas_recaudacion_estimada(df)
-    grafico_recaudacion_estimada_por_ano(df)
-    grafico_recaudacion_estimada_mensual(df)
-    tabla_recaudacion_estimada(df)
-    st.markdown("---")
-
     observaciones(df)
-    if not usa_drive:
-        st.markdown("---")
-
-        estadisticas_recaudacion(recaud_df)
-        st.markdown("---")
-
-        grafico_recaudacion_por_ano(recaud_df)
-        st.markdown("---")
-
-        grafico_permisos_vs_recaudacion(recaud_df)
-        st.markdown("---")
-
-        tabla_recaudacion(recaud_df)
-        st.markdown("---")
-
-        observaciones_recaudacion(recaud_df)

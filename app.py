@@ -39,7 +39,7 @@ MODULES = {
         "handler": show_ferias_module,
     },
     "COMERCIO AMBULATORIO": {
-        "description": "Autorizaciones, pagos y comportamiento anual.",
+        "description": "Autorizaciones emitidas y comportamiento anual.",
         "handler": show_comercio_ambulatorio_module,
     },
     "ANUNCIOS PUBLICITARIOS": {
